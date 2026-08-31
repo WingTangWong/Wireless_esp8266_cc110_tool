@@ -81,8 +81,8 @@ flash.
   currently in memory on the dashboard.
 - `getMHZ()` readback from some SmartRC/CC1101 combos returns 0.0; code
   deliberately treats the requested frequency as authoritative (`setRadioFrequency`).
-- Long captures near `MAX_PULSES` (3072) silently stop the ISR — expected, but
-  the UI does not flag truncation.
+- Static RAM is at ~64.7% (53 KB / 80 KB) after the decode-buffer statics;
+  runtime free heap is the number that matters and is unverified on hardware.
 - Replay timing is bounded to 2 µs–1.6 s per pulse; captures with longer gaps
   are clamped.
 

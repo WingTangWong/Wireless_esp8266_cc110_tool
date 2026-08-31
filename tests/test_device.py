@@ -33,7 +33,8 @@ STATUS_FIELDS = {
     "radioPartnum": (int,), "radioVersion": (int,), "mode": str,
     "frequencyHz": (int,), "bandwidthKhz": (int,), "heap": (int,),
     "fsUsedBytes": (int,), "fsTotalBytes": (int,), "pulses": (int,),
-    "captureDone": bool, "sweepDone": bool, "busy": bool,
+    "captureDone": bool, "captureTruncated": bool, "maxPulses": (int,),
+    "sweepDone": bool, "busy": bool,
 }
 
 

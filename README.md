@@ -153,7 +153,7 @@ The analysis endpoints below are `GET`; the gate-control write endpoints are
 | `/api/capture/start?ms=` | Begin raw capture with auto-stop (50–10000 ms) |
 | `/api/capture/stop` | Stop capture now |
 | `/api/capture/histogram` | Pulse-width histogram (28 bins, high/low split) |
-| `/api/capture/pulses` | Raw pulse list `[[durationUs,level],…]` (streamed) for off-device analysis |
+| `/api/capture/pulses` | Raw pulse list `[[durationUs,level],…]` (streamed), plus `truncated` |
 | `/api/decode/current` | Analyze the in-memory capture |
 | `/api/sample/save?name=` | Save current capture to LittleFS |
 | `/api/sample/load?name=` | Load a saved sample into memory |
@@ -229,6 +229,7 @@ src/main.cpp           Firmware: hardware, Wi-Fi, web UI, HTTP API, JSON glue
 src/decode.{h,cpp}     Pure pulse-timing kernels (clustering, recognizers, histogram)
 src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset
 test/test_decode/      Unity unit tests for src/decode.cpp (`pio test -e native`)
+docs/sample-format.md  On-disk layout of rf315_*.bin capture files
 tools/rfprobe.py       Host-side HTTP API client / CLI (stdlib only)
 tools/rfdecode.py      Pure-Python port of the firmware pulse analysis (cross-check)
 tests/                 pytest suite (pure tests always run; device tests need a board)
