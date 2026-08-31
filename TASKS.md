@@ -208,8 +208,8 @@ on-hardware verification still pending — see `PROGRESS.md`.
       is done** — `src/decode.{h,cpp}`. Next candidates: `sample.{h,cpp}`
       (LittleFS `315R` format + `safeName`/`samplePath`), `gate.{h,cpp}`.
 - [ ] Replace hand-built JSON strings with a small builder or ArduinoJson.
-- [ ] Remove the unused `mfurga/CC1101` dependency from `platformio.ini`, or
-      integrate it and document why both libraries are needed.
+- [x] Removed the unused `mfurga/CC1101` dependency from `platformio.ini`
+      (only `SmartRC_CC1101.h` was ever included).
 - [ ] Add an optional debug build (`-D DEBUG_SERIAL`) with serial tracing of
       capture / decode steps.
 - [ ] Guard against `server.arg()` parsing surprises (empty / non-numeric).

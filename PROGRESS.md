@@ -79,8 +79,6 @@ flash.
   `loop()`), matching `/api/sample/play`; a load failure is not reported back.
 - Gate `fireGate()` calls `loadSample()`, which overwrites whatever capture is
   currently in memory on the dashboard.
-- `unused platformio.ini dependency`: `mfurga/CC1101 @ ^1.5.0` is declared but
-  not `#include`d anywhere in `src/`. Either wire it in or drop it.
 - `getMHZ()` readback from some SmartRC/CC1101 combos returns 0.0; code
   deliberately treats the requested frequency as authoritative (`setRadioFrequency`).
 - Long captures near `MAX_PULSES` (3072) silently stop the ISR — expected, but
