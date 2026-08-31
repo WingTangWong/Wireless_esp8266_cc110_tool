@@ -218,13 +218,14 @@ frequencyHz, pulseCount, durationUs) followed by `pulseCount` × 5-byte
 ## Repository layout
 
 ```
-platformio.ini       PlatformIO project, library deps, [wifi] placeholders
-scripts/version.py   pre-build: injects `git describe` as the firmware version
-secrets.ini.example  Wi-Fi credential template -> copy to secrets.ini (git-ignored)
-src/main.cpp          Entire firmware (hardware, web UI, API, DSP)
-src/notes.md          Reference notes on MegaCode / Flipper OOK650 preset
-tools/rfprobe.py      Host-side HTTP API client / CLI (stdlib only)
-tests/                pytest suite; runs only with a reachable device
+platformio.ini        PlatformIO project, library deps, [wifi] placeholders
+scripts/version.py    pre-build: injects `git describe` as the firmware version
+secrets.ini.example   Wi-Fi credential template -> copy to secrets.ini (git-ignored)
+src/main.cpp           Entire firmware (hardware, web UI, API, DSP)
+src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset
+tools/rfprobe.py       Host-side HTTP API client / CLI (stdlib only)
+tests/                 pytest suite; runs only with a reachable device
+.github/workflows/     CI: firmware build + host compileall + pytest
 ```
 
 See `PROGRESS.md` for current status and `TASKS.md` for the backlog.
