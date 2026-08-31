@@ -101,9 +101,14 @@ against a mock device — 14 tests). Hardware run still pending.
 - [ ] **`rfprobe.py` niceties** — `--timeout` global flag, a `watch` mode that
       re-polls `status`, and `sample play/save/delete` subcommands for
       completeness.
-- [ ] Consider a **`tests/test_helpers.py`** (pure-Python reimplementation of
-      the pulse math) as a cross-check against the firmware's numbers during
-      the on-device `decode` test.
+- [x] **`tools/rfdecode.py` + `tests/test_rfdecode.py`** — pure-Python port of
+      `kmeans2*` and the encoding classifier, unit-tested on synthetic pulse
+      trains, and cross-checked against the device in
+      `test_decode_matches_python_port` (via the new `/api/capture/pulses`).
+  - [ ] Port the bit-extraction and the Linear / MegaCode recognizers too, so
+        the cross-check covers `protocol_candidate` / `protocol_bits`.
+- [ ] `rfprobe.py`: `sample play|save|delete` subcommands, `--timeout` global
+      flag, and a `watch` mode (still outstanding from the niceties item).
 
 ### Real-signal verification
 
@@ -180,8 +185,11 @@ on-hardware verification still pending — see `PROGRESS.md`.
         move both passwords out of source with the P0 work.
 - [ ] Auto-pick the strongest sweep peak and offer "tune here" in the UI.
 - [ ] Flag capture truncation in the UI when `pulseCount` hits `MAX_PULSES`.
-- [ ] HTTP download of a saved `.bin` sample (and upload) for off-device analysis.
-- [ ] Export capture as a Flipper `.sub` file or a raw µs list.
+- [ ] HTTP download of a saved `.bin` sample (and upload) for off-device
+      analysis. (`/api/capture/pulses` already exposes the *in-memory* capture
+      as JSON; this is about the saved files and round-tripping.)
+- [ ] Export capture as a Flipper `.sub` file. (Raw µs list: done via
+      `/api/capture/pulses`.)
 - [ ] Add more protocol recognizers (Princeton PT2262/EV1527, Hs2303, Nice
       FLO, CAME) — the generic candidate-bits output is the starting point.
 - [ ] Optional rolling-code detection / warning (KeeLoq-style) so the user
