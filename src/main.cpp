@@ -1240,6 +1240,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px;borde
 <h1>CC1101 318 MHz Multifunction</h1>
 <p class="sub">WeMOS D1 Mini + SmartRC CC1101 3.0.2 &nbsp;·&nbsp; <a href="/gate" style="color:#6aa8ff">Gate control</a></p>
 <div class="row"><span id="radio" class="badge">radio…</span><span id="mode" class="badge">idle</span><span id="wifi" class="badge">Wi-Fi…</span><span id="ap" class="badge">AP…</span><span id="heap" class="muted"></span></div>
+<div class="row"><button class="tiny" onclick="selftest()">Self-test</button><span id="fwinfo" class="muted"></span><span id="selftest" class="muted"></span></div>
 
 <div class="grid">
 <section class="card">
@@ -1375,6 +1376,8 @@ async function status(){
   $('wifi').title=x.hostname||'';
   $('ap').textContent=x.apActive?('AP '+x.apSsid+' · '+x.apIp+' · '+x.apClients+' client'+(x.apClients==1?'':'s')):'AP down';
   $('heap').textContent='heap '+x.heap+' B';
+  if(x.fsTotalBytes){let pct=(100*x.fsUsedBytes/x.fsTotalBytes).toFixed(0);
+   $('fwinfo').textContent='fw '+x.firmwareVersion+' ('+x.firmwareBuild+') · CC1101 v'+x.radioVersion+' · FS '+x.fsUsedBytes+'/'+x.fsTotalBytes+' B ('+pct+'%)';}
   // Device status is display-only. Never overwrite editable frequency/sweep fields.
   $('targetText').textContent=(x.frequencyHz/1e6).toFixed(6);
   let sig=x.captureDone+':'+x.pulses+':'+x.captureDurationUs;
@@ -1382,6 +1385,15 @@ async function status(){
   if(x.sweepDone&&!lastSweepDone){lastSweepDone=true;spectrumData()}
   if(!x.sweepDone)lastSweepDone=false;
  }catch(e){$('mode').textContent='offline';$('wifi').textContent='Wi-Fi/Web offline'}
+}
+
+async function selftest(){
+ $('selftest').textContent='running…';
+ try{let x=await j('/api/selftest');
+  let fails=Object.entries(x.checks).filter(([k,v])=>!v).map(([k])=>k);
+  $('selftest').textContent=x.ok?'PASS':'FAIL: '+fails.join(', ');
+  $('selftest').style.color=x.ok?'#6ac36a':'#ce6262';
+ }catch(e){$('selftest').textContent='error: '+e.message;$('selftest').style.color='#ce6262'}
 }
 
 async function tune(){try{saveUiSettings();await pushRuntimeConfig();let hz=Math.round(num('target',318)*1e6),bw=$('bw').value;let x=await j('/api/tune?hz='+hz+'&bw='+bw);$('targetText').textContent=(x.frequencyHz/1e6).toFixed(6)}catch(e){err(e)}}
@@ -1436,6 +1448,10 @@ tune();
 status();listSamples();
 statusTimer=setInterval(status,900);
 </script>
+<p class="muted" style="margin-top:24px;border-top:1px solid #30343a;padding-top:10px">
+Authorized use only — receive and transmit only on frequencies and equipment you
+are permitted to use. RF transmission is regulated and is your responsibility.
+</p>
 </body>
 </html>
 )HTML";

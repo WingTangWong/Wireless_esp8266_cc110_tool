@@ -129,8 +129,9 @@ connected client count), and free heap. Sections:
 - **Stored samples** – list / load / decode / play / delete saved captures.
   Playback supports 1–10 repeats and logic inversion.
 
-A **Gate control** link in the header opens `/gate` (see below), a separate
-minimal page for day-to-day gate operation.
+Below the status row: an info line (firmware version/build, CC1101 version,
+LittleFS usage), a **Self-test** button (`/api/selftest`), and a **Gate control**
+link that opens `/gate` (see below).
 
 ## HTTP API
 

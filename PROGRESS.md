@@ -24,7 +24,7 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
 | Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | Implemented + builds; AP `cc1101-setup` at `192.168.4.1`, WPA2, re-asserted in `serviceWifi()`. Not yet checked on hardware. |
 | mDNS (`cc1101.local`) | ✅ | Started once Wi-Fi is up |
-| Web UI (single PROGMEM page) | ✅ | Self-contained, `localStorage`-backed settings |
+| Web UI (single PROGMEM page) | ✅ | Self-contained, `localStorage`-backed settings; info line (fw/CC1101/FS), Self-test button, authorized-use footer |
 | `/api/status` polling | ✅ | UI polls every 900 ms |
 | RSSI frequency sweep | ✅ | Confirmed on hardware ("scan works now") |
 | Raw OOK capture (GDO2 ISR) | ✅ | Edge-timed, glitch filter, 3072-pulse buffer |
