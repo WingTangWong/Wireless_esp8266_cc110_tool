@@ -74,6 +74,7 @@ def _handler(state):
                     "gdo0Pin": 4, "gdo2Pin": 5, "heap": 30000, "fsUsedBytes": 2048,
                     "fsTotalBytes": 1_024_000, "pulses": state.pulses,
                     "captureDone": state.pulses > 0, "captureDurationUs": 20000,
+                    "captureTruncated": False, "maxPulses": 3072,
                     "sweepDone": bool(state.sweep) and not state.busy,
                     "sweepCount": len(state.sweep), "busy": state.busy,
                 })
@@ -107,7 +108,8 @@ def _handler(state):
                 for b in (1, 0, 1, 1, 0, 0, 1, 0):
                     pulses += [[500, 1], [1500 if b else 500, 0]]
                 return self._json({"ok": True, "frequencyHz": state.freq,
-                                   "durationUs": 20000, "count": len(pulses), "pulses": pulses})
+                                   "durationUs": 20000, "truncated": False,
+                                   "count": len(pulses), "pulses": pulses})
             if p == "/api/capture/histogram":
                 counts = [8, 4, 4] + [0] * 25
                 high = [4, 2, 2] + [0] * 25

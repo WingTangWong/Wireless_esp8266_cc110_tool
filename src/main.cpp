@@ -188,6 +188,7 @@ volatile uint8_t pulseLevels[MAX_PULSES];
 volatile uint16_t pulseCount = 0;
 
 volatile bool captureActive = false;
+volatile bool captureTruncated = false;   // hit MAX_PULSES before the time limit
 volatile uint32_t captureLastEdgeUs = 0;
 volatile uint8_t capturePreviousLevel = LOW;
 uint32_t captureStartUs = 0;
@@ -437,6 +438,7 @@ void IRAM_ATTR rawEdgeISR() {
   uint16_t i = pulseCount;
   if(i >= MAX_PULSES) {
     captureActive = false;
+    captureTruncated = true;
     return;
   }
 
@@ -469,6 +471,7 @@ static void normalizeCapture() {
 static void startCapture(uint32_t maxMs) {
   pulseCount = 0;
   captureDone = false;
+  captureTruncated = false;
   captureDurationUs = 0;
 
   configureRawOok(targetBandwidthKhz);
@@ -1071,7 +1074,7 @@ async function status(){
   // Device status is display-only. Never overwrite editable frequency/sweep fields.
   $('targetText').textContent=(x.frequencyHz/1e6).toFixed(6);
   let sig=x.captureDone+':'+x.pulses+':'+x.captureDurationUs;
-  if(x.captureDone&&sig!==lastCaptureSignature){lastCaptureSignature=sig;let ri=x.pulses+' pulses, '+(x.captureDurationUs/1000).toFixed(2)+' ms';$('recinfo').textContent=ri;localStorage.setItem(RECINFO_STORE,ri);pulseData()}
+  if(x.captureDone&&sig!==lastCaptureSignature){lastCaptureSignature=sig;let ri=x.pulses+' pulses, '+(x.captureDurationUs/1000).toFixed(2)+' ms'+(x.captureTruncated?(' — TRUNCATED at '+x.maxPulses+' pulses, capture cut short'):'');$('recinfo').textContent=ri;localStorage.setItem(RECINFO_STORE,ri);pulseData()}
   if(x.sweepDone&&!lastSweepDone){lastSweepDone=true;spectrumData()}
   if(!x.sweepDone)lastSweepDone=false;
  }catch(e){$('mode').textContent='offline';$('wifi').textContent='Wi-Fi/Web offline'}
@@ -1398,6 +1401,8 @@ static void setupRoutes() {
     s += ",\"fsTotalBytes\":" + String(fsi.totalBytes);
     s += ",\"pulses\":" + String(pulseCount);
     s += ",\"captureDone\":" + jsonBool(captureDone);
+    s += ",\"captureTruncated\":" + jsonBool(captureTruncated);
+    s += ",\"maxPulses\":" + String(MAX_PULSES);
     s += ",\"captureDurationUs\":" + String(captureDurationUs);
     s += ",\"sweepDone\":" + jsonBool(sweepDone);
     s += ",\"sweepCount\":" + String(sweepCount);
@@ -1579,6 +1584,7 @@ static void setupRoutes() {
     server.send(200, "application/json", "");
     String s = "{\"ok\":true,\"frequencyHz\":" + String(targetFrequencyHz);
     s += ",\"durationUs\":" + String(captureDurationUs);
+    s += ",\"truncated\":" + jsonBool(captureTruncated);
     s += ",\"count\":" + String(pulseCount) + ",\"pulses\":[";
     for(uint16_t i = 0; i < pulseCount; ++i) {
       if(i) s += ',';
@@ -1637,13 +1643,17 @@ static void setupRoutes() {
   });
 
   server.on("/api/samples", HTTP_GET, []() {
-    String s = "{\"ok\":true,\"samples\":[";
+    // Chunk-streamed: one saved sample's JSON at a time, so a full LittleFS
+    // never has to fit in a single String.
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "application/json", "");
+    server.sendContent("{\"ok\":true,\"samples\":[");
+
     bool first = true;
     Dir dir = LittleFS.openDir("/");
 
     while(dir.next()) {
-      String fn = dir.fileName();
-      String base = fn;
+      String base = dir.fileName();
       if(base.startsWith("/")) base = base.substring(1, base.length());
       if(!base.startsWith("rf315_") || !base.endsWith(".bin")) continue;
 
@@ -1657,17 +1667,18 @@ static void setupRoutes() {
 
       int start = String("rf315_").length();
       String name = base.substring(start, base.length() - 4);
-      if(!first) s += ',';
+      String row = first ? "" : ",";
       first = false;
-      s += "{\"name\":\"" + name + "\"";
-      s += ",\"frequencyHz\":" + String(h.frequencyHz);
-      s += ",\"pulseCount\":" + String(h.pulseCount);
-      s += ",\"durationUs\":" + String(h.durationUs);
-      s += "}";
+      row += "{\"name\":\"" + name + "\"";
+      row += ",\"frequencyHz\":" + String(h.frequencyHz);
+      row += ",\"pulseCount\":" + String(h.pulseCount);
+      row += ",\"durationUs\":" + String(h.durationUs);
+      row += "}";
+      server.sendContent(row);
     }
 
-    s += "]}";
-    sendJson(s);
+    server.sendContent("]}");
+    server.sendContent("");
   });
 
   // ---- Gate control -------------------------------------------------------
@@ -1780,6 +1791,7 @@ void loop() {
   serviceWifi();
 
   if(captureActive) {
+    if(pulseCount >= MAX_PULSES) captureTruncated = true;
     if((int32_t)(millis() - captureDeadlineMs) >= 0 || pulseCount >= MAX_PULSES) {
       stopCapture();
     }

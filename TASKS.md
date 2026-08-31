@@ -188,7 +188,9 @@ on-hardware verification still pending — see `PROGRESS.md`.
   - [ ] Follow-up: make the SoftAP SSID unique per device (append chip ID) and
         move both passwords out of source with the P0 work.
 - [ ] Auto-pick the strongest sweep peak and offer "tune here" in the UI.
-- [ ] Flag capture truncation in the UI when `pulseCount` hits `MAX_PULSES`.
+- [x] Flag capture truncation — `captureTruncated` + `maxPulses` on
+      `/api/status`, `truncated` on `/api/capture/pulses`, and the dashboard
+      capture line says "TRUNCATED at N pulses".
 - [ ] HTTP download of a saved `.bin` sample (and upload) for off-device
       analysis. (`/api/capture/pulses` already exposes the *in-memory* capture
       as JSON; this is about the saved files and round-tripping.)
@@ -212,12 +214,13 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [ ] Add an optional debug build (`-D DEBUG_SERIAL`) with serial tracing of
       capture / decode steps.
 - [ ] Guard against `server.arg()` parsing surprises (empty / non-numeric).
-- [ ] Consider `ESP8266WebServer` chunked responses for `/api/samples` and
-      `/api/sweep/data` to avoid large `String` allocations on low heap.
+- [x] `/api/samples` is chunk-streamed now (one sample row at a time);
+      `/api/capture/pulses` too. `/api/sweep/data` still builds one String
+      (bounded at 601 points → ~15 KB; fine but could stream too).
 
 ## P4 – Docs / project
 
 - [ ] Wiring photo / diagram in `README.md`.
 - [ ] Screenshot of the web UI.
-- [ ] Document the sample `.bin` format in its own short spec file.
+- [x] Document the sample `.bin` format — `docs/sample-format.md`.
 - [ ] Note tested CC1101 board variant(s) and antenna used.
