@@ -61,7 +61,7 @@
 // Firmware identity (reported on /api/status and /api/selftest for verification)
 // -----------------------------------------------------------------------------
 #ifndef CFG_FW_VERSION
-#define CFG_FW_VERSION "0.1.0"
+#define CFG_FW_VERSION "0.1.0-nogit"   // real value comes from scripts/version.py
 #endif
 static constexpr char FIRMWARE_VERSION[] = CFG_FW_VERSION;
 static const char FIRMWARE_BUILD[] = __DATE__ " " __TIME__;
@@ -115,6 +115,10 @@ static constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000UL;
 // which is not recommended). Browse to http://192.168.4.1/ once joined.
 static constexpr char WIFI_AP_SSID[] = CFG_WIFI_AP_SSID;
 static constexpr char WIFI_AP_PASS[] = CFG_WIFI_AP_PASS;
+// WPA2 needs >= 8 chars; empty is allowed (open AP). Catch a bad secrets.ini
+// ap_pass at compile time instead of a silently-dead SoftAP. sizeof includes NUL.
+static_assert(sizeof(WIFI_AP_PASS) == 1 || sizeof(WIFI_AP_PASS) >= 9,
+              "CFG_WIFI_AP_PASS (secrets.ini [wifi] ap_pass) must be empty or at least 8 characters");
 static constexpr uint8_t WIFI_AP_CHANNEL = 6;
 static constexpr uint8_t WIFI_AP_MAX_CLIENTS = 4;
 static const IPAddress WIFI_AP_IP(192, 168, 4, 1);
