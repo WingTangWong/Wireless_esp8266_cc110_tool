@@ -15,6 +15,9 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 |------|-------|-------|
 | PlatformIO build | ✅ | Board `d1_mini`, Arduino framework |
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
+| Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), plus fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` gains a `summary`. Builds; not yet hit on hardware. |
+| Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/decode/samples/gate, `--json`. Verified against a mock device. |
+| `tests/` pytest suite | ✅ | 14 tests, auto-skip without `CC1101_HOST`; all pass against a mock device. Not yet run against real hardware. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
 | Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | Implemented + builds; AP `cc1101-setup` at `192.168.4.1`, WPA2, re-asserted in `serviceWifi()`. Not yet checked on hardware. |
@@ -34,13 +37,16 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 
 ## Not yet started
 
-- Moving Wi-Fi credentials out of source (build flags / captive portal / config
-  file) — now covers the SoftAP password too.
+- **Nothing in this repo has been run on real hardware since the SoftAP, gate
+  control, and verification-endpoint work landed.** Everything below the first
+  three rows of the table is "builds, unverified". The `tests/` suite is the
+  intended way to check most of it once a board is flashed.
 - On-hardware check of the SoftAP: phone joins `cc1101-setup`, dashboard loads at
   `192.168.4.1`, `apClients` count updates, STA + AP stay up together.
 - Gate control: captive-portal / auth for the operator page, and a config
   toggle to disable it. Currently anyone on the LAN or SoftAP can fire a gate.
-- Any automated tests or host-side tooling.
+- `[env:native]` Unity tests for the pure DSP helpers (no hardware needed).
+- CI (build + host-side pytest, which skips without a device).
 - Frequency auto-detect from the sweep (currently manual tune).
 - Serial/debug diagnostics build.
 - Downloading/uploading sample files over HTTP.
@@ -53,7 +59,12 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
   including `be0b666` still contains the old station SSID/password and the old
   SoftAP password `<redacted>` — rotate the actual router/AP passwords and scrub
   history before sharing this repo.
-- Everything lives in one file (~1900 lines); no module split yet.
+- Everything lives in one file (~2000 lines); no module split yet.
+- `FIRMWARE_VERSION` is a hand-maintained string (`"0.1.0"`); not derived from
+  git. `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when
+  `main.cpp` recompiles.
+- SoftAP password length is not checked at build time; a `secrets.ini` `ap_pass`
+  under 8 chars makes the ESP8266 silently refuse to start the AP.
 - **Gate control has no authentication.** The same-origin check on the POST
   endpoints only stops other websites; anyone who can reach the device can open
   `/gate` and fire a gate. Acceptable only on a trusted network / private SoftAP.
@@ -74,6 +85,8 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 
 - [x] CC1101 detected over SPI
 - [x] Wi-Fi joins, web UI reachable
+- [ ] Re-flash current firmware; `CC1101_HOST=… pytest` passes (14 tests)
+- [ ] `tools/rfprobe.py selftest` returns `ok:true` with a sane radio version
 - [ ] SoftAP `cc1101-setup` visible; phone joins and loads `192.168.4.1`
 - [ ] STA and AP stay up together; `apClients` count tracks connections
 - [x] RSSI sweep produces a sensible spectrum

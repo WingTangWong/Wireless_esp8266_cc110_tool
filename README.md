@@ -64,6 +64,33 @@ pio run -t upload       # flash over USB
 pio device monitor      # serial (optional; no debug output by default)
 ```
 
+### Uploading to the D1 Mini
+
+- Plug the board in with a **data** USB cable; the D1 Mini enters flash mode on
+  its own (no buttons to hold).
+- `pio run -t upload` auto-detects the port. Force one with
+  `pio run -t upload --upload-port /dev/ttyUSB0` (Linux) /
+  `COM5` (Windows) / `/dev/cu.usbserial-*` (macOS).
+- To speed flashing add `upload_speed = 921600` under `[env:d1_mini]`.
+- The ESP8266 boot ROM logs at 74880 baud: `pio device monitor -b 74880`.
+- If the port doesn't appear on Linux you likely need the CH340 driver and
+  membership in the `dialout` group.
+
+### Testing against a real device
+
+`tools/rfprobe.py` is a stdlib-only CLI for the HTTP API, and `tests/` is a
+pytest suite that runs only when a flashed, networked module is reachable:
+
+```bash
+tools/rfprobe.py --host cc1101.local selftest
+tools/rfprobe.py sweep 317.7 318.3 --json | jq .summary
+
+python -m pip install -r requirements-dev.txt
+CC1101_HOST=cc1101.local pytest        # skips entirely with no device
+```
+
+See `tests/README.md`.
+
 ### Reaching the dashboard
 
 The device runs **concurrent AP + station** (`WIFI_AP_STA`): it always hosts its
@@ -113,12 +140,13 @@ The analysis endpoints below are `GET`; the gate-control write endpoints are
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/api/status` | Radio / Wi-Fi / SoftAP / capture / sweep state, free heap |
+| `/api/status` | Firmware version/build, CC1101 partnum/version, Wi-Fi / SoftAP / capture / sweep state, heap, LittleFS usage |
+| `/api/selftest` | One-call health check: SPI, radio version, LittleFS, heap, network → `{ok, checks:{…}}` |
 | `/api/config?...` | Set runtime data rate, TX power, and decoder timing params |
 | `/api/tune?hz=&bw=` | Set target frequency (Hz) and bandwidth (kHz) |
 | `/api/nudge?delta=` | Shift target frequency by delta Hz |
 | `/api/sweep/start?start=&stop=&step=&dwell=&bw=` | Begin an RSSI sweep |
-| `/api/sweep/data` | Sweep results as `[{hz,rssi}]` |
+| `/api/sweep/data` | Sweep results: `count`, `points:[{hz,rssi}]`, `summary:{rssiMin/Max/MeanDbm,peakHz}` |
 | `/api/capture/start?ms=` | Begin raw capture with auto-stop (50–10000 ms) |
 | `/api/capture/stop` | Stop capture now |
 | `/api/capture/histogram` | Pulse-width histogram (28 bins, high/low split) |
@@ -194,6 +222,8 @@ platformio.ini       PlatformIO project, library deps, [wifi] placeholders
 secrets.ini.example  Wi-Fi credential template -> copy to secrets.ini (git-ignored)
 src/main.cpp          Entire firmware (hardware, web UI, API, DSP)
 src/notes.md          Reference notes on MegaCode / Flipper OOK650 preset
+tools/rfprobe.py      Host-side HTTP API client / CLI (stdlib only)
+tests/                pytest suite; runs only with a reachable device
 ```
 
 See `PROGRESS.md` for current status and `TASKS.md` for the backlog.
