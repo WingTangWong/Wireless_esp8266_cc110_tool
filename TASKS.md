@@ -38,7 +38,7 @@ each section. Check items off as they land; move notes to `PROGRESS.md`.
 - [ ] Consider a first-boot captive portal (WiFiManager) so a fresh unit needs
       no `secrets.ini` at all — the reusable end state. Bigger change; separate
       from this pass.
-- [ ] Add a short "authorized use only" disclaimer to the dashboard footer
+- [x] Add a short "authorized use only" disclaimer to the dashboard footer
       (the `/gate` page already has one).
 
 ## P1 – Core functionality verification
@@ -95,9 +95,9 @@ against a mock device — 14 tests). Hardware run still pending.
       `scripts/`, and `pytest` (device tests skip). PlatformIO/pip cached.
   - [ ] Add the `native` env build to CI once it exists.
   - [ ] Add a lint step (`ruff`) once a config is agreed.
-- [ ] **Surface the new status fields in the dashboard** — show firmware
-      version/build and LittleFS used/total in the header or an "info" line;
-      add a "Self-test" button that calls `/api/selftest`.
+- [x] **Surface the new status fields in the dashboard** — an info line shows
+      fw version/build, CC1101 version, LittleFS used/total; a "Self-test"
+      button calls `/api/selftest` and shows PASS / failed-check names.
 - [ ] **`rfprobe.py` niceties** — `--timeout` global flag, a `watch` mode that
       re-polls `status`, and `sample play/save/delete` subcommands for
       completeness.
