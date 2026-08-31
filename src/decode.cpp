@@ -94,6 +94,58 @@ const char* encodingName(Encoding e) {
   }
 }
 
+BitExtraction candidateBits(const PulseSpan& p, const Clusters& all,
+                            const Clusters& high, const Clusters& low, Encoding enc) {
+  BitExtraction r;
+
+  const float allSplit  = (all.shortUs  + all.longUs)  * 0.5f;
+  const float highSplit = (high.shortUs + high.longUs) * 0.5f;
+  const float lowSplit  = (low.shortUs  + low.longUs)  * 0.5f;
+  const float sync = (5000.0f > all.longUs * 4.0f) ? 5000.0f : all.longUs * 4.0f;
+  r.syncThresholdUs = sync;
+
+  const uint16_t n = p.n;
+  size_t bl = 0;
+  const size_t cap = 220;
+
+  for (uint16_t i = 0; i < n && bl < cap; ++i) {
+    if ((float)p.dur[i] > sync) {
+      if (bl && r.bits[bl - 1] != '|') { r.bits[bl] = '|'; r.inverted[bl] = '|'; ++bl; }
+      continue;
+    }
+
+    if (p.lvl[i] != 1 || i + 1 >= n || p.lvl[i + 1] != 0) continue;
+
+    const uint32_t h = p.dur[i];
+    const uint32_t l = p.dur[i + 1];
+    if ((float)l > sync) {
+      if (bl && r.bits[bl - 1] != '|') { r.bits[bl] = '|'; r.inverted[bl] = '|'; ++bl; }
+      ++i;
+      continue;
+    }
+
+    char bit = '?';
+    if (enc == ENC_PULSE_DISTANCE) {
+      bit = ((float)l < lowSplit) ? '0' : '1';
+    } else if (enc == ENC_PULSE_WIDTH) {
+      bit = ((float)h < highSplit) ? '0' : '1';
+    } else {
+      const bool hs = (float)h < allSplit;
+      const bool ls = (float)l < allSplit;
+      if (hs && !ls) bit = '0';
+      else if (!hs && ls) bit = '1';
+    }
+
+    r.bits[bl] = bit;
+    r.inverted[bl] = (bit == '0') ? '1' : (bit == '1') ? '0' : '?';
+    ++bl;
+    ++i;
+  }
+  r.bits[bl] = 0;
+  r.inverted[bl] = 0;
+  return r;
+}
+
 ProtocolDecode tryLinear(const PulseSpan& p) {
   ProtocolDecode out;
   enum State { WAIT_HEADER, SAVE_HIGH, CHECK_LOW } state = WAIT_HEADER;

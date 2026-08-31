@@ -773,55 +773,15 @@ static String decodeCurrentJson() {
   rfd::Clusters low = rfd::kmeans2Level(span, LOW);
   if(!all.count) return "{\"ok\":false,\"error\":\"no usable pulse widths\"}";
 
-  float allSplit = (all.shortUs + all.longUs) * 0.5f;
   float allRatio = all.shortUs > 0 ? all.longUs / all.shortUs : 0;
-  float highSplit = (high.shortUs + high.longUs) * 0.5f;
-  float lowSplit = (low.shortUs + low.longUs) * 0.5f;
 
   rfd::Encoding enc = rfd::classifyEncoding(all, high, low);
   String encoding = rfd::encodingName(enc);
 
-  float syncThreshold = max(5000.0f, all.longUs * 4.0f);
-  String bits;
-  String inverted;
-
-  for(uint16_t i = 0; i < n && bits.length() < 220; ++i) {
-    if(pulseDurations[i] > syncThreshold) {
-      if(bits.length() && bits[bits.length() - 1] != '|') {
-        bits += '|';
-        inverted += '|';
-      }
-      continue;
-    }
-
-    if(pulseLevels[i] != HIGH || i + 1 >= n || pulseLevels[i + 1] != LOW) continue;
-
-    uint32_t h = pulseDurations[i];
-    uint32_t l = pulseDurations[i + 1];
-    if(l > syncThreshold) {
-      if(bits.length() && bits[bits.length() - 1] != '|') {
-        bits += '|'; inverted += '|';
-      }
-      ++i;
-      continue;
-    }
-
-    char bit = '?';
-    if(enc == rfd::ENC_PULSE_DISTANCE) {
-      bit = (l < lowSplit) ? '0' : '1';
-    } else if(enc == rfd::ENC_PULSE_WIDTH) {
-      bit = (h < highSplit) ? '0' : '1';
-    } else {
-      bool hs = h < allSplit;
-      bool ls = l < allSplit;
-      if(hs && !ls) bit = '0';
-      else if(!hs && ls) bit = '1';
-    }
-
-    bits += bit;
-    inverted += (bit == '0') ? '1' : (bit == '1') ? '0' : '?';
-    ++i;
-  }
+  // ~450 bytes; keep it off the web handler's stack.
+  static rfd::BitExtraction be;
+  be = rfd::candidateBits(span, all, high, low, enc);
+  float syncThreshold = be.syncThresholdUs;
 
   rfd::MegaParams mp{
     megaPulseUs, megaPulseTolUs, megaSymbolUs, megaSymbolTolUs,
@@ -841,8 +801,8 @@ static String decodeCurrentJson() {
   out += ",\"sync_gap_threshold_us\":" + String(syncThreshold, 0);
   out += ",\"high_clusters_us\":[" + String(high.shortUs, 1) + "," + String(high.longUs, 1) + "]";
   out += ",\"low_clusters_us\":[" + String(low.shortUs, 1) + "," + String(low.longUs, 1) + "]";
-  out += ",\"candidate_bits\":\"" + bits + "\"";
-  out += ",\"candidate_bits_inverted\":\"" + inverted + "\"";
+  out += ",\"candidate_bits\":\"" + String(be.bits) + "\"";
+  out += ",\"candidate_bits_inverted\":\"" + String(be.inverted) + "\"";
 
   if(specific.matched) {
     out += ",\"protocol_candidate\":\"" + String(specific.name) + "\"";

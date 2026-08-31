@@ -63,6 +63,17 @@ Clusters kmeans2Level(const PulseSpan& p, uint8_t wantedLevel,
 Encoding    classifyEncoding(const Clusters& all, const Clusters& high, const Clusters& low);
 const char* encodingName(Encoding e);
 
+struct BitExtraction {
+  char  bits[224]     = {0};   // best-effort bitstring, '|' between bursts
+  char  inverted[224] = {0};   // same with 0/1 flipped
+  float syncThresholdUs = 0.0f;
+};
+
+// Best-effort candidate bitstring from HIGH/LOW pulse pairs. Matches the loop
+// that was inline in decodeCurrentJson (caps at 220 characters).
+BitExtraction candidateBits(const PulseSpan& p, const Clusters& all,
+                            const Clusters& high, const Clusters& low, Encoding enc);
+
 ProtocolDecode tryLinear(const PulseSpan& p);
 ProtocolDecode tryMegaCode(const PulseSpan& p, const MegaParams& mp);
 
