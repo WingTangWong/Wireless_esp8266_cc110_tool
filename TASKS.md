@@ -43,6 +43,46 @@ each section. Check items off as they land; move notes to `PROGRESS.md`.
 
 ## P1 – Core functionality verification
 
+### Device test & measurement harness
+
+Goal: flash a real D1 Mini, drive its HTTP API from a host, and pull JSON back
+to verify the firmware actually works — plus an automated test suite that runs
+when (and only when) a device is reachable.
+
+- [ ] Document `pio run -t upload` to the Wemos D1 Mini: auto port detection,
+      `--upload-port /dev/ttyUSB0`, `upload_speed = 921600`, the "hold no
+      buttons, just plug in" note, and `pio device monitor -b 74880` for the
+      boot ROM log. Put it in `README.md`.
+- [ ] `tools/rfprobe.py` — dependency-light CLI (stdlib `urllib` only) that hits
+      the API against `--host cc1101.local` (or an IP):
+      `status`, `tune <mhz> [bw]`, `sweep <start> <stop> [step]` (polls
+      `/api/status` then dumps `/api/sweep/data`), `record <ms>` +
+      `histogram` + `decode`, `samples`, `gate`. Human-readable by default,
+      `--json` prints the raw response for scripting/piping to `jq`.
+- [ ] Confirm every endpoint already emits parseable JSON (it does) and add the
+      fields needed for verification:
+      - `/api/status`: `firmwareVersion` / build id, `radioPartnum` +
+        `radioVersion` from CC1101 `PARTNUM`/`VERSION` regs, LittleFS
+        used/total bytes.
+      - `/api/sweep/data`: a `summary` object (min/max/mean RSSI, peak hz).
+      - `/api/decode/current`: keep the existing shape; ensure numeric fields
+        are numbers not strings.
+- [ ] `/api/selftest` (GET, JSON) — one call for CI-style checks: SPI reachable,
+      `getCC1101()` true, PARTNUM/VERSION sane, LittleFS mounted, free heap
+      above a floor. Returns `{"ok":true,"checks":{...}}`.
+- [ ] `test/test_device.py` — pytest suite that **auto-skips** unless
+      `CC1101_HOST` is set and the device answers `/api/selftest`. Cases:
+      selftest all-green; `/api/status` radio detected; tune round-trips within
+      1 kHz; sweep returns the expected point count with RSSI in [-128, 0];
+      `record`/`stop` moves `mode` idle→recording→idle; histogram bins sum to
+      pulse count; each response validates against a small inline JSON schema.
+- [ ] README + `PROGRESS.md`: how to run it (`CC1101_HOST=cc1101.local pytest`),
+      and note it needs a flashed, networked module.
+- [ ] Optional: `platformio.ini` `[env:native]` + Unity tests for the pure
+      helpers (`kmeans2*`, `nearDuration`, `safeName`) that need no hardware.
+
+### Real-signal verification
+
 - [ ] Capture a real 318 MHz MegaCode remote; confirm the ISR yields clean
       ~1 ms pulses in ~6 ms frames.
 - [ ] Validate the MegaCode 24-bit recognizer against that capture
