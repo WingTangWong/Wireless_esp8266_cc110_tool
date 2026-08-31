@@ -57,6 +57,8 @@
 #include <SmartRC_CC1101.h>
 #include <math.h>
 
+#include "decode.h"
+
 // -----------------------------------------------------------------------------
 // Firmware identity (reported on /api/status and /api/selftest for verification)
 // -----------------------------------------------------------------------------
@@ -747,294 +749,37 @@ static String gateAssignmentJson(const GateAssignment& a) {
 
 // -----------------------------------------------------------------------------
 // Generic timing clustering / decode helpers
+//
+// The pure kernels (clustering, encoding classifier, Linear/MegaCode
+// recognizers, histogram binning) live in decode.{h,cpp} so they can be
+// unit-tested on the host. Everything below is JSON glue over the volatile
+// capture buffers.
 // -----------------------------------------------------------------------------
-struct Clusters {
-  float shortUs = 0;
-  float longUs = 0;
-  uint16_t count = 0;
-};
-
-static Clusters kmeans2All(uint32_t minV = 40, uint32_t maxV = 12000) {
-  Clusters r{};
-  uint16_t n = pulseCount;
-  if(!n) return r;
-
-  float lo = 1e9f;
-  float hi = 0;
-  uint16_t good = 0;
-
-  for(uint16_t i = 0; i < n; ++i) {
-    uint32_t v = pulseDurations[i];
-    if(v < minV || v > maxV) continue;
-    if(v < lo) lo = v;
-    if(v > hi) hi = v;
-    ++good;
-  }
-  if(!good) return r;
-
-  float c0 = lo;
-  float c1 = hi;
-  for(uint8_t iter = 0; iter < 12; ++iter) {
-    double s0 = 0, s1 = 0;
-    uint16_t n0 = 0, n1 = 0;
-    for(uint16_t i = 0; i < n; ++i) {
-      uint32_t v = pulseDurations[i];
-      if(v < minV || v > maxV) continue;
-      if(fabsf((float)v - c0) <= fabsf((float)v - c1)) {
-        s0 += v; ++n0;
-      } else {
-        s1 += v; ++n1;
-      }
-    }
-    if(n0) c0 = (float)(s0 / n0);
-    if(n1) c1 = (float)(s1 / n1);
-  }
-
-  if(c0 > c1) {
-    float t = c0; c0 = c1; c1 = t;
-  }
-  r.shortUs = c0;
-  r.longUs = c1;
-  r.count = good;
-  return r;
-}
-
-static Clusters kmeans2Level(uint8_t wantedLevel, uint32_t minV = 40, uint32_t maxV = 12000) {
-  Clusters r{};
-  uint16_t n = pulseCount;
-  float lo = 1e9f;
-  float hi = 0;
-  uint16_t good = 0;
-
-  for(uint16_t i = 0; i < n; ++i) {
-    if(pulseLevels[i] != wantedLevel) continue;
-    uint32_t v = pulseDurations[i];
-    if(v < minV || v > maxV) continue;
-    if(v < lo) lo = v;
-    if(v > hi) hi = v;
-    ++good;
-  }
-  if(!good) return r;
-
-  float c0 = lo;
-  float c1 = hi;
-  for(uint8_t iter = 0; iter < 12; ++iter) {
-    double s0 = 0, s1 = 0;
-    uint16_t n0 = 0, n1 = 0;
-    for(uint16_t i = 0; i < n; ++i) {
-      if(pulseLevels[i] != wantedLevel) continue;
-      uint32_t v = pulseDurations[i];
-      if(v < minV || v > maxV) continue;
-      if(fabsf((float)v - c0) <= fabsf((float)v - c1)) {
-        s0 += v; ++n0;
-      } else {
-        s1 += v; ++n1;
-      }
-    }
-    if(n0) c0 = (float)(s0 / n0);
-    if(n1) c1 = (float)(s1 / n1);
-  }
-
-  if(c0 > c1) {
-    float t = c0; c0 = c1; c1 = t;
-  }
-  r.shortUs = c0;
-  r.longUs = c1;
-  r.count = good;
-  return r;
-}
-
-static bool nearDuration(uint32_t value, uint32_t target, uint32_t tolerance) {
-  return value > target ? (value - target <= tolerance) : (target - value <= tolerance);
-}
-
-struct ProtocolDecode {
-  bool matched = false;
-  String name;
-  String bits;
-  uint32_t data = 0;
-  String details;
-};
-
-// Focused recognizer for common Linear 10-bit timing used in the 315/318 MHz area.
-static ProtocolDecode tryLinear() {
-  ProtocolDecode out;
-  enum State { WAIT_HEADER, SAVE_HIGH, CHECK_LOW } state = WAIT_HEADER;
-  uint32_t savedHigh = 0;
-  uint32_t data = 0;
-  uint8_t bitCount = 0;
-
-  auto addBit = [&](uint8_t bit) {
-    data = (data << 1) | bit;
-    ++bitCount;
+static rfd::PulseSpan capturedPulseSpan() {
+  return rfd::PulseSpan{
+    (const uint32_t*)pulseDurations,
+    (const uint8_t*)pulseLevels,
+    pulseCount,
   };
-
-  for(uint16_t i = 0; i < pulseCount; ++i) {
-    uint8_t level = pulseLevels[i];
-    uint32_t dur = pulseDurations[i];
-
-    if(state == WAIT_HEADER) {
-      if(level == LOW && nearDuration(dur, 21000, 5250)) {
-        data = 0;
-        bitCount = 0;
-        state = SAVE_HIGH;
-      }
-    } else if(state == SAVE_HIGH) {
-      if(level == HIGH) {
-        savedHigh = dur;
-        state = CHECK_LOW;
-      } else {
-        state = WAIT_HEADER;
-      }
-    } else {
-      if(level != LOW) {
-        state = WAIT_HEADER;
-        continue;
-      }
-
-      if(dur >= 2500) {
-        bool guard = nearDuration(dur, 21000, 5250);
-        if(guard) {
-          if(nearDuration(savedHigh, 500, 350)) addBit(0);
-          else if(nearDuration(savedHigh, 1500, 350)) addBit(1);
-
-          if(bitCount == 10) {
-            out.matched = true;
-            out.name = "Linear 10-bit";
-            out.data = data;
-            for(int b = 9; b >= 0; --b) out.bits += ((data >> b) & 1) ? '1' : '0';
-            out.details = "~500/1500 us pulse-pair timing with ~21 ms frame guard";
-            return out;
-          }
-        }
-        state = WAIT_HEADER;
-      } else if(nearDuration(savedHigh, 500, 350) && nearDuration(dur, 1500, 350)) {
-        addBit(0);
-        state = SAVE_HIGH;
-      } else if(nearDuration(savedHigh, 1500, 350) && nearDuration(dur, 500, 350)) {
-        addBit(1);
-        state = SAVE_HIGH;
-      } else {
-        state = WAIT_HEADER;
-      }
-    }
-  }
-  return out;
-}
-
-// Focused recognizer for common 24-bit MegaCode timing.
-static ProtocolDecode tryMegaCode() {
-  ProtocolDecode out;
-  enum State { WAIT_HEADER, START_BIT, SAVE_LOW, CHECK_HIGH } state = WAIT_HEADER;
-  uint32_t data = 0;
-  uint8_t bitCount = 0;
-  uint8_t lastBit = 0;
-  int32_t teLast = 0;
-  const uint32_t halfSymbolUs = megaSymbolUs / 2;
-  const uint32_t longLowTargetUs = (megaSymbolUs > megaPulseUs) ? (megaSymbolUs - megaPulseUs) : 1;
-  const uint32_t shortLowTargetUs = (halfSymbolUs > megaPulseUs) ? (halfSymbolUs - megaPulseUs) : 1;
-
-  auto addBit = [&](uint8_t bit) {
-    data = (data << 1) | bit;
-    ++bitCount;
-  };
-
-  for(uint16_t i = 0; i < pulseCount; ++i) {
-    uint8_t level = pulseLevels[i];
-    uint32_t dur = pulseDurations[i];
-
-    switch(state) {
-      case WAIT_HEADER:
-        if(level == LOW && nearDuration(dur, megaHeaderLowUs, megaHeaderTolUs)) state = START_BIT;
-        break;
-
-      case START_BIT:
-        if(level == HIGH && nearDuration(dur, megaPulseUs, megaPulseTolUs)) {
-          data = 0;
-          bitCount = 0;
-          addBit(1);
-          lastBit = 1;
-          state = SAVE_LOW;
-        } else {
-          state = WAIT_HEADER;
-        }
-        break;
-
-      case SAVE_LOW:
-        if(level != LOW) {
-          state = WAIT_HEADER;
-          break;
-        }
-        if(dur >= megaFrameGapUs) {
-          if(bitCount == 24 && ((data >> 23) & 1)) {
-            out.matched = true;
-            out.name = "MegaCode 24-bit";
-            out.data = data;
-            for(int b = 23; b >= 0; --b) out.bits += ((data >> b) & 1) ? '1' : '0';
-            uint32_t serial = (data >> 3) & 0xFFFF;
-            uint32_t facility = (data >> 19) & 0x0F;
-            uint32_t button = data & 0x07;
-            out.details = "facility=" + String(facility) + ", serial=" + String(serial) + ", button=" + String(button);
-            return out;
-          }
-          state = WAIT_HEADER;
-          break;
-        }
-
-        teLast = lastBit ? (int32_t)dur : (int32_t)dur - (int32_t)halfSymbolUs;
-        state = CHECK_HIGH;
-        break;
-
-      case CHECK_HIGH:
-        if(level != HIGH) {
-          state = WAIT_HEADER;
-          break;
-        }
-        if(nearDuration(dur, megaPulseUs, megaPulseTolUs) && teLast > 0 && nearDuration((uint32_t)teLast, longLowTargetUs, megaSymbolTolUs)) {
-          addBit(1);
-          lastBit = 1;
-          state = SAVE_LOW;
-        } else if(nearDuration(dur, megaPulseUs, megaPulseTolUs) && teLast > 0 && nearDuration((uint32_t)teLast, shortLowTargetUs, megaSymbolTolUs / 2)) {
-          addBit(0);
-          lastBit = 0;
-          state = SAVE_LOW;
-        } else {
-          state = WAIT_HEADER;
-        }
-        break;
-    }
-  }
-  return out;
 }
 
 static String decodeCurrentJson() {
   uint16_t n = pulseCount;
   if(n < 4) return "{\"ok\":false,\"error\":\"not enough pulse data\"}";
 
-  Clusters all = kmeans2All();
-  Clusters high = kmeans2Level(HIGH);
-  Clusters low = kmeans2Level(LOW);
+  rfd::PulseSpan span = capturedPulseSpan();
+  rfd::Clusters all = rfd::kmeans2All(span);
+  rfd::Clusters high = rfd::kmeans2Level(span, HIGH);
+  rfd::Clusters low = rfd::kmeans2Level(span, LOW);
   if(!all.count) return "{\"ok\":false,\"error\":\"no usable pulse widths\"}";
 
   float allSplit = (all.shortUs + all.longUs) * 0.5f;
   float allRatio = all.shortUs > 0 ? all.longUs / all.shortUs : 0;
-  float highRatio = high.shortUs > 0 ? high.longUs / high.shortUs : 1;
-  float lowRatio = low.shortUs > 0 ? low.longUs / low.shortUs : 1;
   float highSplit = (high.shortUs + high.longUs) * 0.5f;
   float lowSplit = (low.shortUs + low.longUs) * 0.5f;
 
-  String encoding = "unknown / mixed timing";
-  if(high.count && low.count) {
-    if(highRatio < 1.45f && lowRatio > 1.70f) {
-      encoding = "pulse-distance / PPM-style";
-    } else if(lowRatio < 1.45f && highRatio > 1.70f) {
-      encoding = "pulse-width / PWM-style";
-    } else if(highRatio > 1.70f && lowRatio > 1.70f && allRatio > 1.7f && allRatio < 4.8f) {
-      encoding = "complementary short-long pulse pairs";
-    } else if(allRatio > 1.7f && allRatio < 4.8f) {
-      encoding = "short-long timing family";
-    }
-  }
+  rfd::Encoding enc = rfd::classifyEncoding(all, high, low);
+  String encoding = rfd::encodingName(enc);
 
   float syncThreshold = max(5000.0f, all.longUs * 4.0f);
   String bits;
@@ -1062,9 +807,9 @@ static String decodeCurrentJson() {
     }
 
     char bit = '?';
-    if(encoding.startsWith("pulse-distance")) {
+    if(enc == rfd::ENC_PULSE_DISTANCE) {
       bit = (l < lowSplit) ? '0' : '1';
-    } else if(encoding.startsWith("pulse-width")) {
+    } else if(enc == rfd::ENC_PULSE_WIDTH) {
       bit = (h < highSplit) ? '0' : '1';
     } else {
       bool hs = h < allSplit;
@@ -1078,9 +823,13 @@ static String decodeCurrentJson() {
     ++i;
   }
 
-  ProtocolDecode linear = tryLinear();
-  ProtocolDecode mega = tryMegaCode();
-  ProtocolDecode specific = linear.matched ? linear : mega;
+  rfd::MegaParams mp{
+    megaPulseUs, megaPulseTolUs, megaSymbolUs, megaSymbolTolUs,
+    megaFrameGapUs, megaHeaderLowUs, megaHeaderTolUs,
+  };
+  rfd::ProtocolDecode linear = rfd::tryLinear(span);
+  rfd::ProtocolDecode mega = rfd::tryMegaCode(span, mp);
+  rfd::ProtocolDecode specific = linear.matched ? linear : mega;
 
   String out = "{\"ok\":true";
   out += ",\"frequencyHz\":" + String(targetFrequencyHz);
@@ -1096,10 +845,10 @@ static String decodeCurrentJson() {
   out += ",\"candidate_bits_inverted\":\"" + inverted + "\"";
 
   if(specific.matched) {
-    out += ",\"protocol_candidate\":\"" + specific.name + "\"";
-    out += ",\"protocol_bits\":\"" + specific.bits + "\"";
+    out += ",\"protocol_candidate\":\"" + String(specific.name) + "\"";
+    out += ",\"protocol_bits\":\"" + String(specific.bits) + "\"";
     out += ",\"protocol_data_dec\":" + String(specific.data);
-    out += ",\"protocol_details\":\"" + specific.details + "\"";
+    out += ",\"protocol_details\":\"" + String(specific.details) + "\"";
   } else {
     out += ",\"protocol_candidate\":null";
   }
@@ -1114,28 +863,9 @@ static String pulseHistogramJson() {
   uint16_t highs[BINS] = {0};
   uint16_t lows[BINS] = {0};
 
-  uint16_t n = pulseCount;
-  if(!n) return "{\"counts\":[],\"high\":[],\"low\":[],\"labels\":[]}";
+  if(!pulseCount) return "{\"counts\":[],\"high\":[],\"low\":[],\"labels\":[]}";
 
-  uint32_t maxV = 0;
-  for(uint16_t i = 0; i < n; ++i) {
-    uint32_t v = pulseDurations[i];
-    if(v <= 12000 && v > maxV) maxV = v;
-  }
-  if(maxV < 1000) maxV = 1000;
-
-  uint32_t binW = (maxV + BINS - 1) / BINS;
-  if(binW == 0) binW = 1;
-
-  for(uint16_t i = 0; i < n; ++i) {
-    uint32_t v = pulseDurations[i];
-    if(v > maxV) continue;
-    uint32_t bi = v / binW;
-    if(bi >= BINS) bi = BINS - 1;
-    ++counts[bi];
-    if(pulseLevels[i]) ++highs[bi];
-    else ++lows[bi];
-  }
+  uint32_t binW = rfd::histogram(capturedPulseSpan(), BINS, counts, highs, lows);
 
   String s = "{\"binWidthUs\":" + String(binW) + ",\"counts\":[";
   for(uint8_t i = 0; i < BINS; ++i) {
