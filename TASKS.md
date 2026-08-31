@@ -90,9 +90,11 @@ against a mock device — 14 tests). Hardware run still pending.
       `CFG_FW_VERSION`, fallback `0.1.0-nogit`.
 - [x] **Validate the SoftAP password at build time** — `static_assert` in
       `main.cpp`: `CFG_WIFI_AP_PASS` must be empty or ≥ 8 chars.
-- [ ] **CI** (GitHub Actions): `pio run` for `d1_mini` (+ `native` once it
-      exists), `ruff`/`python -m py_compile` on `tools/` + `tests/`, and
-      `pytest` (skips with no device). Cache `~/.platformio`.
+- [x] **CI** (`.github/workflows/ci.yml`): builds `d1_mini` (no `secrets.ini`,
+      exercising the placeholder path), `compileall` on `tools/`+`tests/`+
+      `scripts/`, and `pytest` (device tests skip). PlatformIO/pip cached.
+  - [ ] Add the `native` env build to CI once it exists.
+  - [ ] Add a lint step (`ruff`) once a config is agreed.
 - [ ] **Surface the new status fields in the dashboard** — show firmware
       version/build and LittleFS used/total in the header or an "info" line;
       add a "Self-test" button that calls `/api/selftest`.

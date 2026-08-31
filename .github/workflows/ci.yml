@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  firmware:
+    name: Build firmware (d1_mini)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # scripts/version.py needs tags/history
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - run: pip install --upgrade platformio
+
+      - name: Build (no secrets.ini -> [wifi] placeholders, SoftAP-only)
+        run: pio run -e d1_mini
+
+  host:
+    name: Host tooling + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: pip install -r requirements-dev.txt
+
+      - name: Compile-check tools + tests
+        run: python -m compileall -q tools tests scripts
+
+      - name: pytest (device tests auto-skip without CC1101_HOST)
+        run: pytest -q

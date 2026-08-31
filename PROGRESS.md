@@ -17,6 +17,7 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), plus fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` gains a `summary`. Builds; not yet hit on hardware. |
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
+| CI | ✅ | `.github/workflows/ci.yml`: `pio run` (d1_mini, no secrets), `compileall`, `pytest` (device tests skip). Not yet run on GitHub — no remote configured. |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/decode/samples/gate, `--json`. Verified against a mock device. |
 | `tests/` pytest suite | ✅ | 14 tests, auto-skip without `CC1101_HOST`; all pass against a mock device. Not yet run against real hardware. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
@@ -47,7 +48,6 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 - Gate control: captive-portal / auth for the operator page, and a config
   toggle to disable it. Currently anyone on the LAN or SoftAP can fire a gate.
 - `[env:native]` Unity tests for the pure DSP helpers (no hardware needed).
-- CI (build + host-side pytest, which skips without a device).
 - Frequency auto-detect from the sweep (currently manual tune).
 - Serial/debug diagnostics build.
 - Downloading/uploading sample files over HTTP.
