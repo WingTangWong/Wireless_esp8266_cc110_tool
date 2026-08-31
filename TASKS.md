@@ -85,12 +85,11 @@ against a mock device — 14 tests). Hardware run still pending.
       `src/decode.h` / `.cpp` that compiles for `native` with no Arduino
       dependency, so they can be unit-tested and so `main.cpp` shrinks. Prereq
       for the `[env:native]` item above and the P3 module split.
-- [ ] **Derive `FIRMWARE_VERSION` from git** via a `platformio.ini`
-      `extra_scripts` pre-action (`git describe --tags --always --dirty`
-      → `-DCFG_FW_VERSION=...`), falling back to `"0.1.0-nogit"`.
-- [ ] **Validate the SoftAP password at build time** — a `static_assert` (or a
-      PlatformIO check) that `CFG_WIFI_AP_PASS` is empty or ≥ 8 chars, so a bad
-      `secrets.ini` fails loudly instead of a silently-dead AP.
+- [x] **Derive `FIRMWARE_VERSION` from git** — `scripts/version.py`
+      (`pre:` extra_script) injects `git describe --tags --always --dirty` as
+      `CFG_FW_VERSION`, fallback `0.1.0-nogit`.
+- [x] **Validate the SoftAP password at build time** — `static_assert` in
+      `main.cpp`: `CFG_WIFI_AP_PASS` must be empty or ≥ 8 chars.
 - [ ] **CI** (GitHub Actions): `pio run` for `d1_mini` (+ `native` once it
       exists), `ruff`/`python -m py_compile` on `tools/` + `tests/`, and
       `pytest` (skips with no device). Cache `~/.platformio`.

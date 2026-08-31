@@ -16,6 +16,7 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 | PlatformIO build | ✅ | Board `d1_mini`, Arduino framework |
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), plus fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` gains a `summary`. Builds; not yet hit on hardware. |
+| Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/decode/samples/gate, `--json`. Verified against a mock device. |
 | `tests/` pytest suite | ✅ | 14 tests, auto-skip without `CC1101_HOST`; all pass against a mock device. Not yet run against real hardware. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
@@ -60,11 +61,8 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
   SoftAP password `<redacted>` — rotate the actual router/AP passwords and scrub
   history before sharing this repo.
 - Everything lives in one file (~2000 lines); no module split yet.
-- `FIRMWARE_VERSION` is a hand-maintained string (`"0.1.0"`); not derived from
-  git. `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when
-  `main.cpp` recompiles.
-- SoftAP password length is not checked at build time; a `secrets.ini` `ap_pass`
-  under 8 chars makes the ESP8266 silently refuse to start the AP.
+- `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when `main.cpp`
+  itself recompiles (not on a docs-only or dep change).
 - **Gate control has no authentication.** The same-origin check on the POST
   endpoints only stops other websites; anyone who can reach the device can open
   `/gate` and fire a gate. Acceptable only on a trusted network / private SoftAP.
