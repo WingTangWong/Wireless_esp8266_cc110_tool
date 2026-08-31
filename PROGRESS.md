@@ -4,10 +4,18 @@ _Last updated: 2026-08-31_
 
 ## Status summary
 
-Firmware builds and runs on the D1 Mini + CC1101. Wi-Fi station mode, the web UI,
-the RSSI sweep, raw capture, timing analysis, LittleFS sample storage, and Timer1
-replay are all implemented in a single `src/main.cpp`. Per the `scan works now`
-commit (2026-08-29), the frequency sweep is confirmed working on hardware.
+Firmware builds clean for `d1_mini`. Implemented in `src/main.cpp`: concurrent
+AP+station Wi-Fi, the analysis dashboard, RSSI sweep, raw capture + timing
+analysis, LittleFS sample storage, Timer1 replay, the two-button gate control
+pages, and the verification endpoints (`/api/selftest`, `/api/capture/pulses`,
+richer `/api/status` + `/api/sweep/data`). Host side: `tools/rfprobe.py` CLI,
+`tools/rfdecode.py` analysis port, a pytest suite, and GitHub Actions CI.
+
+Hardware reality: only the pre-2026-08-29 feature set (SPI, station Wi-Fi, RSSI
+sweep) has ever run on a board. **Everything added since — SoftAP, gate control,
+all verification endpoints — builds but is unverified on hardware.** The pytest
+suite (`CC1101_HOST=… pytest`) is the intended way to check most of it after a
+flash.
 
 ## What works
 
