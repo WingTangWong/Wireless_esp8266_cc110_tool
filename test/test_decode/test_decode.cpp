@@ -118,6 +118,48 @@ void test_encoding_names() {
   TEST_ASSERT_EQUAL_STRING("unknown / mixed timing", encodingName(ENC_UNKNOWN));
 }
 
+// --- candidate bits ------------------------------------------------
+
+static BitExtraction extract(const Capture& c, Encoding forced) {
+  Clusters a = kmeans2All(c.span());
+  Clusters h = kmeans2Level(c.span(), 1);
+  Clusters l = kmeans2Level(c.span(), 0);
+  return candidateBits(c.span(), a, h, l, forced);
+}
+
+void test_candidate_bits_pulse_distance() {
+  // long LOW = 1, short LOW = 0 (no trailing gap: keeps the LOW cluster clean)
+  Capture c;
+  for (int b : {1, 0, 1, 1, 0}) { c.add(500, 1); c.add(b ? 1500 : 500, 0); }
+  BitExtraction be = extract(c, ENC_PULSE_DISTANCE);
+  TEST_ASSERT_EQUAL_STRING("10110", be.bits);
+  TEST_ASSERT_EQUAL_STRING("01001", be.inverted);
+}
+
+void test_candidate_bits_pulse_width() {
+  Capture c;
+  for (int b : {1, 1, 0, 1, 0}) { c.add(b ? 1500 : 500, 1); c.add(500, 0); }
+  BitExtraction be = extract(c, ENC_PULSE_WIDTH);
+  TEST_ASSERT_EQUAL_STRING("11010", be.bits);
+}
+
+void test_candidate_bits_burst_separator() {
+  // two 3-bit bursts split by a long sync gap
+  Capture c;
+  for (int b : {1, 0, 1}) { c.add(500, 1); c.add(b ? 1500 : 500, 0); }
+  c.add(40000, 0);  // > sync threshold -> '|'
+  for (int b : {0, 1, 0}) { c.add(500, 1); c.add(b ? 1500 : 500, 0); }
+  BitExtraction be = extract(c, ENC_PULSE_DISTANCE);
+  TEST_ASSERT_EQUAL_STRING("101|010", be.bits);
+}
+
+void test_candidate_bits_cap_220() {
+  Capture c;
+  for (int i = 0; i < 400; ++i) { c.add(500, 1); c.add(1500, 0); }
+  BitExtraction be = extract(c, ENC_PULSE_DISTANCE);
+  TEST_ASSERT_LESS_OR_EQUAL_size_t(220, strlen(be.bits));
+}
+
 // --- MegaCode recognizer ------------------------------------------
 
 static const MegaParams MEGA = {1000, 300, 6000, 1200, 10000, 13000, 3400};
@@ -190,6 +232,10 @@ int main(int, char**) {
   RUN_TEST(test_classify_pulse_width);
   RUN_TEST(test_classify_unknown);
   RUN_TEST(test_encoding_names);
+  RUN_TEST(test_candidate_bits_pulse_distance);
+  RUN_TEST(test_candidate_bits_pulse_width);
+  RUN_TEST(test_candidate_bits_burst_separator);
+  RUN_TEST(test_candidate_bits_cap_220);
   RUN_TEST(test_megacode_roundtrip);
   RUN_TEST(test_megacode_rejects_noise);
   RUN_TEST(test_histogram_bins_sum);

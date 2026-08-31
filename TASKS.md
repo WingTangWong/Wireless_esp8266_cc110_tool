@@ -87,9 +87,10 @@ against a mock device — 14 tests). Hardware run still pending.
       `tryMegaCode`, `histogram`. `main.cpp` now passes a `PulseSpan` over the
       volatile buffers and only does JSON. `ProtocolDecode` uses fixed char
       buffers instead of `String`.
-  - [ ] Move the candidate-bits extraction loop into `decode.cpp` too (still
-        inline in `decodeCurrentJson`, now switching on the `rfd::Encoding`
-        enum).
+  - [x] Candidate-bits extraction moved into `rfd::candidateBits`
+        (`BitExtraction` result), with 4 Unity tests (PPM/PWM bit strings,
+        burst separator, 220-char cap). `decodeCurrentJson` holds it in a
+        function-local `static` to keep ~450 bytes off the handler stack.
 - [x] **Derive `FIRMWARE_VERSION` from git** — `scripts/version.py`
       (`pre:` extra_script) injects `git describe --tags --always --dirty` as
       `CFG_FW_VERSION`, fallback `0.1.0-nogit`.
