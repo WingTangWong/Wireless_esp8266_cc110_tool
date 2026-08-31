@@ -25,7 +25,8 @@ flash.
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), plus fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` gains a `summary`. Builds; not yet hit on hardware. |
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
-| CI | ✅ | `.github/workflows/ci.yml`: `pio run` (d1_mini, no secrets), `compileall`, `pytest` (device tests skip). Not yet run on GitHub — no remote configured. |
+| CI | ✅ | `.github/workflows/ci.yml`: `pio run` (d1_mini, no secrets), `pio test -e native`, `compileall`, `pytest` (device tests skip). Not yet run on GitHub — no remote configured. |
+| Pure DSP module + native unit tests | ✅ | `src/decode.{h,cpp}` (clustering, encoding classifier, Linear/MegaCode recognizers, histogram) extracted from `main.cpp`; `test/test_decode/` — 12 Unity tests, all pass under `pio test -e native`. `main.cpp` is JSON glue over it now. d1_mini still builds (Flash 39.3%). |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/decode/samples/gate, `--json`. Verified against a mock device. |
 | `tests/` pytest suite | ✅ | 6 pure tests (always run) + 15 device tests (auto-skip without `CC1101_HOST`). All green against a mock device. Not yet run against real hardware. |
 | `/api/capture/pulses` + `tools/rfdecode.py` | ✅ | Raw pulse list endpoint (chunk-streamed) and a pure-Python port of the clustering/encoding classifier; a device test cross-checks the two. |
@@ -56,7 +57,6 @@ flash.
   `192.168.4.1`, `apClients` count updates, STA + AP stay up together.
 - Gate control: captive-portal / auth for the operator page, and a config
   toggle to disable it. Currently anyone on the LAN or SoftAP can fire a gate.
-- `[env:native]` Unity tests for the pure DSP helpers (no hardware needed).
 - Frequency auto-detect from the sweep (currently manual tune).
 - Serial/debug diagnostics build.
 - Downloading/uploading sample files over HTTP.

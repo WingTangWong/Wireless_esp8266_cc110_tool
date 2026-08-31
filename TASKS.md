@@ -72,19 +72,24 @@ against a mock device — 14 tests). Hardware run still pending.
       `requirements-dev.txt`, `tests/README.md` added.
 - [x] README + `PROGRESS.md` updated with how to run it.
 - [ ] Run it against real hardware and tick the `PROGRESS.md` checklist rows.
-- [ ] `platformio.ini` `[env:native]` + Unity tests for the pure helpers
-      (`kmeans2All`/`kmeans2Level`, `nearDuration`, `safeName`, the Linear /
-      MegaCode recognizers fed synthetic pulse arrays). Needs the DSP helpers
-      split into a header includable without the Arduino/radio stack — see the
-      "extract pure DSP" task below.
+- [x] `platformio.ini` `[env:native]` + Unity tests — `test/test_decode/`,
+      12 tests over `kmeans2*`, `nearDuration`, `classifyEncoding`,
+      `tryMegaCode` (synthetic frame round-trip + noise reject), `histogram`.
+      `pio test -e native`, wired into CI.
+  - [ ] Add `tryLinear` positive coverage (needs a hand-built valid frame or a
+        recorded sample) and `safeName` once it also moves out of `main.cpp`.
 
 ### Follow-on tasks found while building the harness
 
-- [ ] **Extract the pure DSP helpers** (`Clusters`/`kmeans2*`, `nearDuration`,
-      `tryLinear`, `tryMegaCode`, `pulseHistogramJson` math) into a
-      `src/decode.h` / `.cpp` that compiles for `native` with no Arduino
-      dependency, so they can be unit-tested and so `main.cpp` shrinks. Prereq
-      for the `[env:native]` item above and the P3 module split.
+- [x] **Extract the pure DSP helpers** into `src/decode.{h,cpp}` (namespace
+      `rfd`, Arduino-free): `Clusters`/`kmeans2All`/`kmeans2Level`,
+      `nearDuration`, `classifyEncoding`+`encodingName`, `tryLinear`,
+      `tryMegaCode`, `histogram`. `main.cpp` now passes a `PulseSpan` over the
+      volatile buffers and only does JSON. `ProtocolDecode` uses fixed char
+      buffers instead of `String`.
+  - [ ] Move the candidate-bits extraction loop into `decode.cpp` too (still
+        inline in `decodeCurrentJson`, now switching on the `rfd::Encoding`
+        enum).
 - [x] **Derive `FIRMWARE_VERSION` from git** — `scripts/version.py`
       (`pre:` extra_script) injects `git describe --tags --always --dirty` as
       `CFG_FW_VERSION`, fallback `0.1.0-nogit`.
@@ -93,7 +98,7 @@ against a mock device — 14 tests). Hardware run still pending.
 - [x] **CI** (`.github/workflows/ci.yml`): builds `d1_mini` (no `secrets.ini`,
       exercising the placeholder path), `compileall` on `tools/`+`tests/`+
       `scripts/`, and `pytest` (device tests skip). PlatformIO/pip cached.
-  - [ ] Add the `native` env build to CI once it exists.
+  - [x] Add `pio test -e native` to CI.
   - [ ] Add a lint step (`ruff`) once a config is agreed.
 - [x] **Surface the new status fields in the dashboard** — an info line shows
       fw version/build, CC1101 version, LittleFS used/total; a "Self-test"
@@ -199,7 +204,9 @@ on-hardware verification still pending — see `PROGRESS.md`.
 
 ## P3 – Code quality
 
-- [ ] Split `main.cpp` into modules (radio, capture, decode, web, storage).
+- [ ] Split `main.cpp` into modules (radio, capture, web, storage). **`decode`
+      is done** — `src/decode.{h,cpp}`. Next candidates: `sample.{h,cpp}`
+      (LittleFS `315R` format + `safeName`/`samplePath`), `gate.{h,cpp}`.
 - [ ] Replace hand-built JSON strings with a small builder or ArduinoJson.
 - [ ] Remove the unused `mfurga/CC1101` dependency from `platformio.ini`, or
       integrate it and document why both libraries are needed.

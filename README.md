@@ -87,6 +87,8 @@ tools/rfprobe.py sweep 317.7 318.3 --json | jq .summary
 
 python -m pip install -r requirements-dev.txt
 CC1101_HOST=cc1101.local pytest        # skips entirely with no device
+
+pio test -e native                     # host unit tests for src/decode.cpp
 ```
 
 See `tests/README.md`.
@@ -223,12 +225,14 @@ frequencyHz, pulseCount, durationUs) followed by `pulseCount` × 5-byte
 platformio.ini        PlatformIO project, library deps, [wifi] placeholders
 scripts/version.py    pre-build: injects `git describe` as the firmware version
 secrets.ini.example   Wi-Fi credential template -> copy to secrets.ini (git-ignored)
-src/main.cpp           Entire firmware (hardware, web UI, API, DSP)
+src/main.cpp           Firmware: hardware, Wi-Fi, web UI, HTTP API, JSON glue
+src/decode.{h,cpp}     Pure pulse-timing kernels (clustering, recognizers, histogram)
 src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset
+test/test_decode/      Unity unit tests for src/decode.cpp (`pio test -e native`)
 tools/rfprobe.py       Host-side HTTP API client / CLI (stdlib only)
 tools/rfdecode.py      Pure-Python port of the firmware pulse analysis (cross-check)
 tests/                 pytest suite (pure tests always run; device tests need a board)
-.github/workflows/     CI: firmware build + host compileall + pytest
+.github/workflows/     CI: firmware build + native unit tests + host compileall + pytest
 ```
 
 See `PROGRESS.md` for current status and `TASKS.md` for the backlog.
