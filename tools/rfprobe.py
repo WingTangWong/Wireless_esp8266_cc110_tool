@@ -153,6 +153,14 @@ def cmd_histogram(args):
     emit(args, d, f"binWidthUs={d.get('binWidthUs')} bins={len(d.get('counts', []))}")
 
 
+def cmd_pulses(args):
+    d = call(args.host, "/api/capture/pulses")
+    emit(args, d, (
+        f"{d.get('count')} pulses  {d.get('durationUs', 0) / 1000:.2f} ms  "
+        f"@ {d.get('frequencyHz', 0) / 1e6:.6f} MHz"
+    ))
+
+
 def cmd_decode(args):
     d = call(args.host, "/api/decode/current")
     emit(args, d, (
@@ -233,6 +241,7 @@ def build_parser():
     r.set_defaults(func=cmd_record)
 
     sub.add_parser("histogram").set_defaults(func=cmd_histogram)
+    sub.add_parser("pulses").set_defaults(func=cmd_pulses)
     sub.add_parser("decode").set_defaults(func=cmd_decode)
     sub.add_parser("samples").set_defaults(func=cmd_samples)
     sub.add_parser("gate").set_defaults(func=cmd_gate)

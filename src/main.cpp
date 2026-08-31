@@ -1880,6 +1880,26 @@ static void setupRoutes() {
     sendJson(pulseHistogramJson());
   });
 
+  // Raw pulse list of the in-memory capture, for off-device analysis and for
+  // cross-checking /api/decode/current. [ [durationUs, level], ... ].
+  // Streamed in chunks so a full 3072-pulse buffer cannot exhaust the heap.
+  server.on("/api/capture/pulses", HTTP_GET, []() {
+    if(captureActive) return sendError("capture in progress", 409);
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "application/json", "");
+    String s = "{\"ok\":true,\"frequencyHz\":" + String(targetFrequencyHz);
+    s += ",\"durationUs\":" + String(captureDurationUs);
+    s += ",\"count\":" + String(pulseCount) + ",\"pulses\":[";
+    for(uint16_t i = 0; i < pulseCount; ++i) {
+      if(i) s += ',';
+      s += '[' + String(pulseDurations[i]) + ',' + String(pulseLevels[i]) + ']';
+      if(s.length() > 1024) { server.sendContent(s); s = ""; }
+    }
+    s += "]}";
+    server.sendContent(s);
+    server.sendContent("");
+  });
+
   server.on("/api/decode/current", HTTP_GET, []() {
     if(isBusy()) return sendError("busy", 409);
     sendJson(decodeCurrentJson());

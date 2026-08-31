@@ -131,6 +131,27 @@ def test_samples_list_schema(api):
         assert all(_is_number(s[k]) for k in ("frequencyHz", "pulseCount", "durationUs"))
 
 
+def test_decode_matches_python_port(api, host):
+    """Cross-check the firmware's clustering/encoding against tools/rfdecode.py
+    over the same raw pulses. Skips if the current capture is too small."""
+    import rfprobe
+    import rfdecode
+
+    api("/api/capture/start", {"ms": 1500})
+    rfprobe._wait_idle(host, 12.0)
+    raw = api("/api/capture/pulses")
+    if raw["count"] < 8:
+        pytest.skip("not enough pulses on the band to cross-check decode")
+
+    dev = api("/api/decode/current")
+    ours = rfdecode.analyze([(d, lvl) for d, lvl in raw["pulses"]])
+
+    # same k-means, same inputs -> cluster centres within rounding noise
+    assert abs(dev["short_us"] - ours["short_us"]) <= max(2.0, ours["short_us"] * 0.02)
+    assert abs(dev["long_us"] - ours["long_us"]) <= max(2.0, ours["long_us"] * 0.02)
+    assert dev["encoding"] == ours["encoding"]
+
+
 def test_gate_status_schema(api):
     d = api("/api/gate")
     assert d["txPowerForcedDbm"] == 12

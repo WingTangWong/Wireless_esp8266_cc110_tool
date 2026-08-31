@@ -19,7 +19,8 @@ commit (2026-08-29), the frequency sweep is confirmed working on hardware.
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
 | CI | ✅ | `.github/workflows/ci.yml`: `pio run` (d1_mini, no secrets), `compileall`, `pytest` (device tests skip). Not yet run on GitHub — no remote configured. |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/decode/samples/gate, `--json`. Verified against a mock device. |
-| `tests/` pytest suite | ✅ | 14 tests, auto-skip without `CC1101_HOST`; all pass against a mock device. Not yet run against real hardware. |
+| `tests/` pytest suite | ✅ | 6 pure tests (always run) + 15 device tests (auto-skip without `CC1101_HOST`). All green against a mock device. Not yet run against real hardware. |
+| `/api/capture/pulses` + `tools/rfdecode.py` | ✅ | Raw pulse list endpoint (chunk-streamed) and a pure-Python port of the clustering/encoding classifier; a device test cross-checks the two. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
 | Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | Implemented + builds; AP `cc1101-setup` at `192.168.4.1`, WPA2, re-asserted in `serviceWifi()`. Not yet checked on hardware. |

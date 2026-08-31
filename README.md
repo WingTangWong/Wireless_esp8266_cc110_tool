@@ -151,6 +151,7 @@ The analysis endpoints below are `GET`; the gate-control write endpoints are
 | `/api/capture/start?ms=` | Begin raw capture with auto-stop (50–10000 ms) |
 | `/api/capture/stop` | Stop capture now |
 | `/api/capture/histogram` | Pulse-width histogram (28 bins, high/low split) |
+| `/api/capture/pulses` | Raw pulse list `[[durationUs,level],…]` (streamed) for off-device analysis |
 | `/api/decode/current` | Analyze the in-memory capture |
 | `/api/sample/save?name=` | Save current capture to LittleFS |
 | `/api/sample/load?name=` | Load a saved sample into memory |
@@ -225,7 +226,8 @@ secrets.ini.example   Wi-Fi credential template -> copy to secrets.ini (git-igno
 src/main.cpp           Entire firmware (hardware, web UI, API, DSP)
 src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset
 tools/rfprobe.py       Host-side HTTP API client / CLI (stdlib only)
-tests/                 pytest suite; runs only with a reachable device
+tools/rfdecode.py      Pure-Python port of the firmware pulse analysis (cross-check)
+tests/                 pytest suite (pure tests always run; device tests need a board)
 .github/workflows/     CI: firmware build + host compileall + pytest
 ```
 
