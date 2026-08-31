@@ -49,37 +49,60 @@ Goal: flash a real D1 Mini, drive its HTTP API from a host, and pull JSON back
 to verify the firmware actually works — plus an automated test suite that runs
 when (and only when) a device is reachable.
 
-- [ ] Document `pio run -t upload` to the Wemos D1 Mini: auto port detection,
-      `--upload-port /dev/ttyUSB0`, `upload_speed = 921600`, the "hold no
-      buttons, just plug in" note, and `pio device monitor -b 74880` for the
-      boot ROM log. Put it in `README.md`.
-- [ ] `tools/rfprobe.py` — dependency-light CLI (stdlib `urllib` only) that hits
-      the API against `--host cc1101.local` (or an IP):
-      `status`, `tune <mhz> [bw]`, `sweep <start> <stop> [step]` (polls
-      `/api/status` then dumps `/api/sweep/data`), `record <ms>` +
-      `histogram` + `decode`, `samples`, `gate`. Human-readable by default,
-      `--json` prints the raw response for scripting/piping to `jq`.
-- [ ] Confirm every endpoint already emits parseable JSON (it does) and add the
-      fields needed for verification:
-      - `/api/status`: `firmwareVersion` / build id, `radioPartnum` +
-        `radioVersion` from CC1101 `PARTNUM`/`VERSION` regs, LittleFS
-        used/total bytes.
-      - `/api/sweep/data`: a `summary` object (min/max/mean RSSI, peak hz).
-      - `/api/decode/current`: keep the existing shape; ensure numeric fields
-        are numbers not strings.
-- [ ] `/api/selftest` (GET, JSON) — one call for CI-style checks: SPI reachable,
-      `getCC1101()` true, PARTNUM/VERSION sane, LittleFS mounted, free heap
-      above a floor. Returns `{"ok":true,"checks":{...}}`.
-- [ ] `test/test_device.py` — pytest suite that **auto-skips** unless
-      `CC1101_HOST` is set and the device answers `/api/selftest`. Cases:
-      selftest all-green; `/api/status` radio detected; tune round-trips within
-      1 kHz; sweep returns the expected point count with RSSI in [-128, 0];
-      `record`/`stop` moves `mode` idle→recording→idle; histogram bins sum to
-      pulse count; each response validates against a small inline JSON schema.
-- [ ] README + `PROGRESS.md`: how to run it (`CC1101_HOST=cc1101.local pytest`),
-      and note it needs a flashed, networked module.
-- [ ] Optional: `platformio.ini` `[env:native]` + Unity tests for the pure
-      helpers (`kmeans2*`, `nearDuration`, `safeName`) that need no hardware.
+Implemented in `feat/device-test-harness` (firmware builds; CLI + suite verified
+against a mock device — 14 tests). Hardware run still pending.
+
+- [x] Document `pio run -t upload` to the Wemos D1 Mini (port autodetect,
+      `--upload-port`, `upload_speed`, boot log at 74880) — `README.md`.
+- [x] `tools/rfprobe.py` — stdlib-only CLI: `status`, `selftest`, `tune`,
+      `sweep` (waits for idle, dumps `summary`), `record` (`--histogram`
+      `--decode`), `histogram`, `decode`, `samples`, `gate`, `fire`, `raw`;
+      `--json` for piping to `jq`.
+- [x] Verification fields: `/api/status` gains `firmwareVersion`,
+      `firmwareBuild`, `radioPartnum`, `radioVersion`, `fsUsedBytes`,
+      `fsTotalBytes`, `busy`; `/api/sweep/data` gains `count` + `summary`
+      (`rssiMin/Max/MeanDbm`, `peakHz`).
+- [x] `/api/selftest` (GET, JSON) — `{ok, checks:{spi,radioVersionSane,
+      littlefs,heap,network}, radioPartnum, radioVersion, heap, fs*}`.
+- [x] `tests/test_device.py` (14 tests) + `tests/conftest.py` — auto-skip
+      unless `CC1101_HOST` is set and `/api/selftest` answers. Covers selftest,
+      status schema + radio-detected, FS sanity, tune round-trip + out-of-band
+      reject, sweep point count / RSSI range / summary, capture mode cycle,
+      histogram bin sums, samples + gate schema. `pytest.ini`,
+      `requirements-dev.txt`, `tests/README.md` added.
+- [x] README + `PROGRESS.md` updated with how to run it.
+- [ ] Run it against real hardware and tick the `PROGRESS.md` checklist rows.
+- [ ] `platformio.ini` `[env:native]` + Unity tests for the pure helpers
+      (`kmeans2All`/`kmeans2Level`, `nearDuration`, `safeName`, the Linear /
+      MegaCode recognizers fed synthetic pulse arrays). Needs the DSP helpers
+      split into a header includable without the Arduino/radio stack — see the
+      "extract pure DSP" task below.
+
+### Follow-on tasks found while building the harness
+
+- [ ] **Extract the pure DSP helpers** (`Clusters`/`kmeans2*`, `nearDuration`,
+      `tryLinear`, `tryMegaCode`, `pulseHistogramJson` math) into a
+      `src/decode.h` / `.cpp` that compiles for `native` with no Arduino
+      dependency, so they can be unit-tested and so `main.cpp` shrinks. Prereq
+      for the `[env:native]` item above and the P3 module split.
+- [ ] **Derive `FIRMWARE_VERSION` from git** via a `platformio.ini`
+      `extra_scripts` pre-action (`git describe --tags --always --dirty`
+      → `-DCFG_FW_VERSION=...`), falling back to `"0.1.0-nogit"`.
+- [ ] **Validate the SoftAP password at build time** — a `static_assert` (or a
+      PlatformIO check) that `CFG_WIFI_AP_PASS` is empty or ≥ 8 chars, so a bad
+      `secrets.ini` fails loudly instead of a silently-dead AP.
+- [ ] **CI** (GitHub Actions): `pio run` for `d1_mini` (+ `native` once it
+      exists), `ruff`/`python -m py_compile` on `tools/` + `tests/`, and
+      `pytest` (skips with no device). Cache `~/.platformio`.
+- [ ] **Surface the new status fields in the dashboard** — show firmware
+      version/build and LittleFS used/total in the header or an "info" line;
+      add a "Self-test" button that calls `/api/selftest`.
+- [ ] **`rfprobe.py` niceties** — `--timeout` global flag, a `watch` mode that
+      re-polls `status`, and `sample play/save/delete` subcommands for
+      completeness.
+- [ ] Consider a **`tests/test_helpers.py`** (pure-Python reimplementation of
+      the pulse math) as a cross-check against the firmware's numbers during
+      the on-device `decode` test.
 
 ### Real-signal verification
 

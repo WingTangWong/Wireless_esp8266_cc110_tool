@@ -41,6 +41,11 @@
     /              analysis dashboard
     /gate          two-button operator page (Inner / Outer)
     /gate/config   assign a saved sample + radio settings to each gate button
+    /api/*         JSON API (see README); /api/selftest for a one-call health check
+
+  Host tooling
+    tools/rfprobe.py   CLI over the JSON API
+    tests/             pytest suite (skips unless CC1101_HOST points at a device)
 */
 
 #include <Arduino.h>
@@ -51,6 +56,19 @@
 #include <LittleFS.h>
 #include <SmartRC_CC1101.h>
 #include <math.h>
+
+// -----------------------------------------------------------------------------
+// Firmware identity (reported on /api/status and /api/selftest for verification)
+// -----------------------------------------------------------------------------
+#ifndef CFG_FW_VERSION
+#define CFG_FW_VERSION "0.1.0"
+#endif
+static constexpr char FIRMWARE_VERSION[] = CFG_FW_VERSION;
+static const char FIRMWARE_BUILD[] = __DATE__ " " __TIME__;
+
+// Cached CC1101 identity registers, filled once in setup().
+uint8_t radioPartnum = 0;
+uint8_t radioVersionReg = 0;
 
 // -----------------------------------------------------------------------------
 // Hardware
@@ -1645,6 +1663,10 @@ static void setupRoutes() {
   server.on("/api/status", HTTP_GET, []() {
     String s = "{\"ok\":true";
     s += ",\"radio\":" + jsonBool(radioOk);
+    s += ",\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"";
+    s += ",\"firmwareBuild\":\"" + jsonEscape(String(FIRMWARE_BUILD)) + "\"";
+    s += ",\"radioPartnum\":" + String(radioPartnum);
+    s += ",\"radioVersion\":" + String(radioVersionReg);
     s += ",\"mode\":\"" + currentMode + "\"";
     s += ",\"wifiConnected\":" + jsonBool(WiFi.status() == WL_CONNECTED);
     s += ",\"wifiSsid\":\"" + jsonEscape(WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String(WIFI_SSID)) + "\"";
@@ -1660,11 +1682,50 @@ static void setupRoutes() {
     s += ",\"gdo0Pin\":" + String(PIN_CC1101_GDO0);
     s += ",\"gdo2Pin\":" + String(PIN_CC1101_GDO2);
     s += ",\"heap\":" + String(ESP.getFreeHeap());
+    FSInfo fsi{};
+    LittleFS.info(fsi);
+    s += ",\"fsUsedBytes\":" + String(fsi.usedBytes);
+    s += ",\"fsTotalBytes\":" + String(fsi.totalBytes);
     s += ",\"pulses\":" + String(pulseCount);
     s += ",\"captureDone\":" + jsonBool(captureDone);
     s += ",\"captureDurationUs\":" + String(captureDurationUs);
     s += ",\"sweepDone\":" + jsonBool(sweepDone);
     s += ",\"sweepCount\":" + String(sweepCount);
+    s += ",\"busy\":" + jsonBool(isBusy());
+    s += "}";
+    sendJson(s);
+  });
+
+  server.on("/api/selftest", HTTP_GET, []() {
+    const bool spiOk = radio.getCC1101();
+    const uint8_t pn = radio.SpiReadStatus(CC1101_PARTNUM);
+    const uint8_t ver = radio.SpiReadStatus(CC1101_VERSION);
+    FSInfo fsi{};
+    const bool fsOk = LittleFS.info(fsi);
+    const uint32_t heap = ESP.getFreeHeap();
+
+    const bool versionSane = (ver != 0x00 && ver != 0xFF);
+    const bool heapOk = heap > 8000UL;
+    const bool wifiOk = (WiFi.status() == WL_CONNECTED) || apActive;
+    const bool allOk = spiOk && versionSane && fsOk && heapOk && wifiOk;
+
+    String s = "{\"ok\":" + jsonBool(allOk);
+    s += ",\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"";
+    s += ",\"firmwareBuild\":\"" + jsonEscape(String(FIRMWARE_BUILD)) + "\"";
+    s += ",\"checks\":{";
+    s += "\"spi\":" + jsonBool(spiOk);
+    s += ",\"radioVersionSane\":" + jsonBool(versionSane);
+    s += ",\"littlefs\":" + jsonBool(fsOk);
+    s += ",\"heap\":" + jsonBool(heapOk);
+    s += ",\"network\":" + jsonBool(wifiOk);
+    s += "}";
+    s += ",\"radioPartnum\":" + String(pn);
+    s += ",\"radioVersion\":" + String(ver);
+    s += ",\"heap\":" + String(heap);
+    s += ",\"fsUsedBytes\":" + String(fsi.usedBytes);
+    s += ",\"fsTotalBytes\":" + String(fsi.totalBytes);
+    s += ",\"mode\":\"" + currentMode + "\"";
+    s += ",\"busy\":" + jsonBool(isBusy());
     s += "}";
     sendJson(s);
   });
@@ -1754,12 +1815,29 @@ static void setupRoutes() {
   });
 
   server.on("/api/sweep/data", HTTP_GET, []() {
-    String s = "{\"ok\":true,\"points\":[";
+    String s = "{\"ok\":true,\"count\":" + String(sweepCount) + ",\"points\":[";
+    int32_t rssiMin = 127;
+    int32_t rssiMax = -128;
+    int32_t rssiSum = 0;
+    uint32_t peakHz = 0;
     for(uint16_t i = 0; i < sweepCount; ++i) {
       if(i) s += ',';
       s += "{\"hz\":" + String(sweepHz[i]) + ",\"rssi\":" + String(sweepRssi[i]) + "}";
+      const int32_t r = sweepRssi[i];
+      if(r < rssiMin) rssiMin = r;
+      if(r > rssiMax) { rssiMax = r; peakHz = sweepHz[i]; }
+      rssiSum += r;
     }
-    s += "]}";
+    s += "],\"summary\":";
+    if(sweepCount) {
+      s += "{\"rssiMinDbm\":" + String(rssiMin);
+      s += ",\"rssiMaxDbm\":" + String(rssiMax);
+      s += ",\"rssiMeanDbm\":" + String((float)rssiSum / (float)sweepCount, 1);
+      s += ",\"peakHz\":" + String(peakHz) + "}";
+    } else {
+      s += "null";
+    }
+    s += "}";
     sendJson(s);
   });
 
@@ -1947,6 +2025,8 @@ void setup() {
   radio.setGDO(PIN_CC1101_GDO0, PIN_CC1101_GDO2);
   radio.Init();
   radioOk = radio.getCC1101();
+  radioPartnum = radio.SpiReadStatus(CC1101_PARTNUM);
+  radioVersionReg = radio.SpiReadStatus(CC1101_VERSION);
 
   configureRawOok(targetBandwidthKhz);
   setRadioFrequency(targetFrequencyHz);
