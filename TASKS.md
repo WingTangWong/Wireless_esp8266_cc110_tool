@@ -103,17 +103,15 @@ against a mock device — 14 tests). Hardware run still pending.
 - [x] **Surface the new status fields in the dashboard** — an info line shows
       fw version/build, CC1101 version, LittleFS used/total; a "Self-test"
       button calls `/api/selftest` and shows PASS / failed-check names.
-- [ ] **`rfprobe.py` niceties** — `--timeout` global flag, a `watch` mode that
-      re-polls `status`, and `sample play/save/delete` subcommands for
-      completeness.
 - [x] **`tools/rfdecode.py` + `tests/test_rfdecode.py`** — pure-Python port of
       `kmeans2*` and the encoding classifier, unit-tested on synthetic pulse
       trains, and cross-checked against the device in
       `test_decode_matches_python_port` (via the new `/api/capture/pulses`).
   - [ ] Port the bit-extraction and the Linear / MegaCode recognizers too, so
         the cross-check covers `protocol_candidate` / `protocol_bits`.
-- [ ] `rfprobe.py`: `sample play|save|delete` subcommands, `--timeout` global
-      flag, and a `watch` mode (still outstanding from the niceties item).
+- [x] `rfprobe.py`: `sample {list,save,load,decode,delete,play}` subcommands,
+      global `--timeout`, `watch` mode. `tests/test_rfprobe_cli.py` +
+      `tests/_fakedevice.py` exercise the CLI in-process (7 tests, always run).
 
 ### Real-signal verification
 
