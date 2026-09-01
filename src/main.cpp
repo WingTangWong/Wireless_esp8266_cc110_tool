@@ -20,8 +20,9 @@
     Concurrent AP + station (WIFI_AP_STA).
     - Joins the configured home network, then browse to http://cc1101.local/
       or the router-assigned DHCP address.
-    - Always hosts its own SoftAP so a phone can connect directly and reach
-      http://192.168.4.1/ with no shared network.
+    - Always hosts its own SoftAP (SSID <ap_ssid>-<chip id>) with a captive
+      portal so a phone connects directly and reaches http://192.168.4.1/
+      with no shared network.
     Credentials come from secrets.ini (git-ignored) via the CFG_WIFI_* build
     defines; copy secrets.ini.example to get started.
 
@@ -53,6 +54,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <DNSServer.h>
 #include <LittleFS.h>
 #include <SmartRC_CC1101.h>
 #include <math.h>
@@ -130,6 +132,8 @@ static const IPAddress WIFI_AP_NETMASK(255, 255, 255, 0);
 bool mdnsStarted = false;
 bool apActive = false;
 uint32_t lastWifiRetryMs = 0;
+String apSsidEffective;          // WIFI_AP_SSID + "-" + chip id (set in startWifiAp)
+DNSServer dnsServer;             // captive-portal catch-all on the SoftAP
 
 // -----------------------------------------------------------------------------
 // Working limits
@@ -1315,14 +1319,24 @@ static void startMdnsIfNeeded() {
 }
 
 static void startWifiAp() {
+  if(!apSsidEffective.length()) {
+    // Per-device suffix so two units nearby don't share an SSID.
+    apSsidEffective = String(WIFI_AP_SSID) + "-" + String(ESP.getChipId(), HEX);
+  }
+
   WiFi.softAPConfig(WIFI_AP_IP, WIFI_AP_GATEWAY, WIFI_AP_NETMASK);
 
   const bool open = WIFI_AP_PASS[0] == '\0';
-  apActive = WiFi.softAP(WIFI_AP_SSID,
-                         open ? nullptr : WIFI_AP_PASS,
+  apActive = WiFi.softAP(apSsidEffective,
+                         open ? String() : String(WIFI_AP_PASS),
                          WIFI_AP_CHANNEL,
                          false,                 // not hidden
                          WIFI_AP_MAX_CLIENTS);
+
+  if(apActive) {
+    dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+    dnsServer.start(53, "*", WIFI_AP_IP);   // every lookup -> the dashboard
+  }
 }
 
 static void startWifi() {
@@ -1352,6 +1366,7 @@ static void serviceWifi() {
   if(!apActive || (WiFi.getMode() & WIFI_AP) == 0) {
     startWifiAp();
   }
+  dnsServer.processNextRequest();
 
   if(WiFi.status() == WL_CONNECTED) {
     startMdnsIfNeeded();
@@ -1414,7 +1429,7 @@ static void setupRoutes() {
     s += ",\"wifiRssi\":" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
     s += ",\"hostname\":\"" + String(WIFI_HOSTNAME) + ".local\"";
     s += ",\"apActive\":" + jsonBool(apActive);
-    s += ",\"apSsid\":\"" + jsonEscape(String(WIFI_AP_SSID)) + "\"";
+    s += ",\"apSsid\":\"" + jsonEscape(apSsidEffective) + "\"";
     s += ",\"apIp\":\"" + WiFi.softAPIP().toString() + "\"";
     s += ",\"apClients\":" + String(WiFi.softAPgetStationNum());
     s += ",\"frequencyHz\":" + String(targetFrequencyHz);
@@ -1787,6 +1802,15 @@ static void setupRoutes() {
   });
 
   server.onNotFound([]() {
+    // Captive-portal: a client that connected via the SoftAP and asked for
+    // anything that isn't the API gets bounced to the dashboard, which pops
+    // the phone's "sign in to network" sheet.
+    const bool viaAp = server.client().localIP() == WIFI_AP_IP;
+    if(viaAp && !server.uri().startsWith("/api/")) {
+      server.sendHeader("Location", String("http://") + WIFI_AP_IP.toString() + "/");
+      server.send(302, "text/plain", "");
+      return;
+    }
     server.send(404, "text/plain", "not found");
   });
 }

@@ -188,10 +188,11 @@ on-hardware verification still pending — see `PROGRESS.md`.
       SoftAP is also the natural place for first-boot provisioning.
       _Done in `feat/softap-concurrent` (builds clean); on-hardware check still
       pending — see `PROGRESS.md`._
-  - [ ] Follow-up: captive-portal redirect on the SoftAP (DNS catch-all → the
-        dashboard) so the phone's "sign in to network" prompt opens it.
-  - [ ] Follow-up: make the SoftAP SSID unique per device (append chip ID) and
-        move both passwords out of source with the P0 work.
+  - [x] Captive portal — `DNSServer` catch-all on the AP + a 302 in
+        `onNotFound` for AP clients (`client().localIP() == WIFI_AP_IP`),
+        so the "sign in to network" sheet opens the dashboard.
+  - [x] SoftAP SSID is `<ap_ssid>-<chipId>` (`apSsidEffective`), reported on
+        `/api/status`. (AP password out of source: done in the P0 pass.)
 - [ ] Auto-pick the strongest sweep peak and offer "tune here" in the UI.
 - [x] Flag capture truncation — `captureTruncated` + `maxPulses` on
       `/api/status`, `truncated` on `/api/capture/pulses`, and the dashboard
