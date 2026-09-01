@@ -71,7 +71,9 @@ against a mock device — 14 tests). Hardware run still pending.
       histogram bin sums, samples + gate schema. `pytest.ini`,
       `requirements-dev.txt`, `tests/README.md` added.
 - [x] README + `PROGRESS.md` updated with how to run it.
-- [ ] Run it against real hardware and tick the `PROGRESS.md` checklist rows.
+- [x] Run against real hardware — firmware `0b136ca` flashed 2026-08-31,
+      `CC1101_HOST=192.168.100.114 pytest` → 31/31, `PROGRESS.md` checklist
+      updated. (Remaining checklist rows need RF signals / a phone.)
 - [x] `platformio.ini` `[env:native]` + Unity tests — `test/test_decode/`,
       12 tests over `kmeans2*`, `nearDuration`, `classifyEncoding`,
       `tryMegaCode` (synthetic frame round-trip + noise reject), `histogram`.
@@ -118,13 +120,17 @@ against a mock device — 14 tests). Hardware run still pending.
 
 ### Real-signal verification
 
+The HTTP / decode / DSP layers are hardware-verified (31/31 device tests +
+a live decode cross-check). These remaining items need actual RF and, for
+some, the target remotes/gate:
+
 - [ ] Capture a real 318 MHz MegaCode remote; confirm the ISR yields clean
       ~1 ms pulses in ~6 ms frames.
-- [ ] Validate the MegaCode 24-bit recognizer against that capture
-      (facility / serial / button fields).
-- [ ] Validate the Linear 10-bit recognizer against a real Linear remote.
-- [ ] End-to-end replay test: saved sample actuates the target device.
+- [ ] Validate the MegaCode / Linear / EV1527 recognizers against real remotes
+      (facility / serial / button, or address / button).
+- [ ] End-to-end replay test: `/gate` fire actuates the target device.
 - [ ] Tune replay TX power / antenna for reliable range.
+- [ ] SoftAP + captive portal from a phone (`cc1101-setup-d0867b`).
 
 ## P2 – Features
 
