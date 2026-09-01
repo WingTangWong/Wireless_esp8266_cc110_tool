@@ -60,8 +60,17 @@ fires.
       `POST /api/remote/press?which=inner|outer` (fires via the main unit,
       returns the wrapped response), `GET /`.
 - [x] Reports `firmwareVersion` + `role:"remote"`; reuses `scripts/version.py`.
-- [ ] Verify the OLED rendering + a physical button press once the display is
-      wired (built + boots without a display attached).
+- [x] Simple OLED: OFFLINE when no link, else node idle/SENDING/BUSY + per-button
+      sample + READY.
+- [x] Onboard-LED indicator (PWM): offline slow-dim / online slow-mid /
+      btn A fast single-pulse / btn B fast double-pulse+gap.
+- [x] `d1_mini_remote_selftest` env — verbose serial, dumps
+      `/api/status|gate|selftest|config|samples` from the node, then drives
+      `/api/tune` + `/api/capture/start` and confirms the node's state changed.
+      **Verified on hardware: 2 PASS / 2 SKIP → OK, repeatable.** Live assigned
+      gates are skipped (build `-DREMOTE_SELFTEST_FIRE` to include them).
+- [ ] Verify OLED rendering + a physical button press once the display is
+      wired (firmware builds + boots without a display).
 
 ### Healthcheck / tests
 

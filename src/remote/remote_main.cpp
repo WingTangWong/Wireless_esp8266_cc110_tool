@@ -10,11 +10,25 @@
   It joins the main unit's SoftAP (cc1101-setup-<chipId>) using the shared
   ap_pass from secrets.ini - so the two are paired by default - polls the main
   unit's HTTP API for status, and POSTs /api/gate/fire when a button is pressed.
+
+  OLED:
+    - no Wi-Fi link / no reply from the node -> big "OFFLINE"
+    - linked -> node idle / SENDING / BUSY state, and for each button whether a
+      sample is assigned and READY.
+
+  Onboard LED (also the indicator when headless):
+    - offline / out of range  -> slow dim pulse
+    - online / in range       -> slow mid-brightness pulse
+    - button A pressed         -> fast single-pulse loop  (~2.5 s)
+    - button B pressed         -> fast double-pulse + long gap  (~2.5 s)
+
   A tiny HTTP server on the remote exposes /api/remote/status and
   POST /api/remote/press?which=inner|outer for the build healthcheck.
 
   Build:  pio run -e d1_mini_remote [-t upload]
-          add -DREMOTE_HEADLESS for a display-less build (serial + LED only).
+          -e d1_mini_remote_headless    display-less (serial + LED only)
+          -e d1_mini_remote_selftest    headless + verbose serial + a loop that
+                                        drives the node and checks state changes
 
   This file is the whole remote firmware; src/main.cpp / src/decode.* (the main
   unit) are excluded from this env via build_src_filter.
@@ -62,6 +76,49 @@ static constexpr char HOSTNAME[]         = "cc1101-remote";
 static constexpr uint8_t PIN_LED   = LED_BUILTIN;  // D4 / GPIO2, active low
 static constexpr uint8_t PIN_BTN_A = D5;           // GPIO14 - inner
 static constexpr uint8_t PIN_BTN_B = D6;           // GPIO12 - outer
+
+// -----------------------------------------------------------------------------
+// Status LED (D4/GPIO2, active-low PWM). This is the primary indicator on a
+// headless remote:
+//   offline / out of range  -> slow, dim pulse
+//   online / in range       -> slow, mid-brightness pulse
+//   button A pressed         -> fast single-pulse loop  (~2.5 s)
+//   button B pressed         -> fast double-pulse with a long gap  (~2.5 s)
+// -----------------------------------------------------------------------------
+enum LedMode { LED_OFFLINE, LED_ONLINE, LED_BTN_A, LED_BTN_B };
+static LedMode  ledMode = LED_OFFLINE;
+static uint32_t ledOverrideUntil = 0;
+
+static void ledButton(char which) {
+  ledMode = (which == 'A') ? LED_BTN_A : LED_BTN_B;
+  ledOverrideUntil = millis() + 2500;
+}
+
+// b: 0 (off) .. 255 (full); LED is active-low, PWM range 0..1023
+static inline void ledLevel(int b) {
+  analogWrite(PIN_LED, (255 - constrain(b, 0, 255)) * 4);
+}
+
+static void updateLed(bool online) {
+  const uint32_t t = millis();
+  if((ledMode == LED_BTN_A || ledMode == LED_BTN_B) && t < ledOverrideUntil) {
+    // fast pulse patterns
+    if(ledMode == LED_BTN_A) {                       // single pulse, 200 ms
+      uint32_t p = t % 200;
+      ledLevel(p < 100 ? p * 255 / 100 : (200 - p) * 255 / 100);
+    } else {                                         // double pulse then gap, 900 ms
+      uint32_t p = t % 900;
+      bool on = (p < 90) || (p >= 200 && p < 290);
+      ledLevel(on ? 255 : 0);
+    }
+    return;
+  }
+  ledMode = online ? LED_ONLINE : LED_OFFLINE;
+  uint32_t p = t % 3000;                             // slow triangle, 3 s period
+  int tri = (p < 1500 ? p : 3000 - p);               // 0..1500
+  if(ledMode == LED_ONLINE) ledLevel(50 + tri * 130 / 1500);   // mid: 50..180
+  else                      ledLevel(3 + tri * 30 / 1500);     // dim: 3..33
+}
 
 // -----------------------------------------------------------------------------
 // Timing
@@ -172,6 +229,7 @@ static String jsonStr(const String& body, const char* key) {
 // HTTP to the main unit
 // -----------------------------------------------------------------------------
 static bool mainRequest(const char* method, const String& path, String& bodyOut, int* codeOut = nullptr) {
+  if(codeOut) *codeOut = 0;
   if(WiFi.status() != WL_CONNECTED) return false;
   WiFiClient client;
   HTTPClient http;
@@ -181,10 +239,14 @@ static bool mainRequest(const char* method, const String& path, String& bodyOut,
 
   int code = (strcmp(method, "POST") == 0) ? http.POST("") : http.GET();
   if(codeOut) *codeOut = code;
-  bool ok = code > 0;
-  if(ok) bodyOut = http.getString();
+  bool got = code > 0;
+  if(got) bodyOut = http.getString();
   http.end();
-  return ok && code >= 200 && code < 300;
+#ifdef REMOTE_SELFTEST
+  Serial.printf("  %s %s -> %d%s\n", method, path.c_str(), code,
+                got ? (String("  ") + bodyOut).c_str() : "  (no response)");
+#endif
+  return got && code >= 200 && code < 300;
 }
 
 static void refreshMainView() {
@@ -222,15 +284,135 @@ static void refreshMainView() {
   mainView = v;
 }
 
-// which = "inner" | "outer"; returns the main unit's response text (or an error)
-static String fireGateOnMain(const char* which, bool* okOut) {
+// which = "inner" | "outer"; returns the main unit's response text (or an error).
+// *okOut = the fire was accepted; *codeOut = HTTP status (0 = no response).
+static String fireGateOnMain(const char* which, bool* okOut, int* codeOut = nullptr) {
   String body;
   int code = 0;
   bool ok = mainRequest("POST", String("/api/gate/fire?which=") + which, body, &code);
   if(okOut) *okOut = ok && jsonBool(body, "ok");
-  if(!ok && body.length() == 0) body = String("{\"ok\":false,\"error\":\"no response (") + code + ")\"}";
+  if(codeOut) *codeOut = code;
+  if(code == 0 && body.length() == 0) body = "{\"ok\":false,\"error\":\"no response from main unit\"}";
   return body;
 }
+
+// -----------------------------------------------------------------------------
+// Self-test (build with -DREMOTE_SELFTEST / env d1_mini_remote_selftest):
+// pull every config/status endpoint over Wi-Fi and dump it to serial, then
+// drive a command and both "button" commands and confirm the main unit's
+// state actually changed. Runs on a timer so it can be watched on the monitor.
+// -----------------------------------------------------------------------------
+#ifdef REMOTE_SELFTEST
+static void stSnapshot() {
+  String b;
+  Serial.println(F("\n========== MAIN UNIT SNAPSHOT =========="));
+  for(const char* p : {"/api/status", "/api/gate", "/api/selftest", "/api/config", "/api/samples"}) {
+    if(mainRequest("GET", p, b)) Serial.printf("%-16s %s\n", p, b.c_str());
+    else                         Serial.printf("%-16s (no 2xx)\n", p);
+    yield();
+  }
+}
+
+// Waits (up to `ms`) for the main unit to report busy=false.
+static void stWaitIdle(uint32_t ms) {
+  uint32_t end = millis() + ms;
+  String b;
+  while(millis() < end) {
+    if(mainRequest("GET", "/api/status", b) && !jsonBool(b, "busy")) return;
+    delay(200);
+    yield();
+  }
+}
+
+// -DREMOTE_SELFTEST_FIRE additionally lets the self-test fire an assigned+ready
+// gate (which actuates real hardware). Off by default.
+static void stRun() {
+  Serial.println(F("\n========== REMOTE SELF-TEST =========="));
+  String b;
+  int pass = 0, skip = 0, total = 0;
+
+  // --- 1. remote command -> node state change: retune (no TX) --------------
+  ++total;
+  mainRequest("GET", "/api/status", b);
+  long f0 = jsonInt(b, "frequencyHz", 318000000);
+  long bw0 = jsonInt(b, "bandwidthKhz", 650);
+  long f1 = (f0 + 40000 <= 348000000) ? f0 + 40000 : f0 - 40000;
+  Serial.printf("[1] retune  %ld -> %ld Hz\n", f0, f1);
+  bool tuned = mainRequest("GET", String("/api/tune?hz=") + f1 + "&bw=" + bw0, b);
+  delay(150);
+  mainRequest("GET", "/api/status", b);
+  long fNow = jsonInt(b, "frequencyHz");
+  bool p1 = tuned && (fNow == f1);
+  Serial.printf("    node frequencyHz now %ld   %s\n", fNow, p1 ? "PASS" : "FAIL");
+  mainRequest("GET", String("/api/tune?hz=") + f0 + "&bw=" + bw0, b);   // restore
+  if(p1) ++pass;
+
+  // --- 2. remote command -> node activity: a short capture (RX only) -------
+  ++total;
+  Serial.println(F("[2] GET /api/capture/start?ms=1200  (poll for 'recording')"));
+  bool started = mainRequest("GET", "/api/capture/start?ms=1200", b);
+  bool p2 = false;
+  String mode;
+  for(int i = 0; i < 10 && !p2; ++i) {
+    if(mainRequest("GET", "/api/status", b)) {
+      mode = jsonStr(b, "mode");
+      if(started && (mode == "recording" || jsonBool(b, "busy"))) p2 = true;
+    }
+    if(!p2) delay(120);
+  }
+  Serial.printf("    node reached mode='%s'   %s\n", p2 ? "recording" : mode.c_str(), p2 ? "PASS" : "FAIL");
+  stWaitIdle(4000);
+  if(p2) ++pass;
+
+  // --- 3+4. simulate each button; confirm the press reached the node ------
+  for(const char* which : {"inner", "outer"}) {
+    ++total;
+    mainRequest("GET", "/api/gate", b);
+    String whichObj;
+    jsonRaw(b, which, whichObj);
+    bool ready = jsonBool(whichObj, "ready");
+    bool assigned = jsonStr(whichObj, "sampleName").length() > 0;
+    String errBefore = jsonStr(b, "lastFireError");
+    Serial.printf("[%d] simulate BTN %s  (assigned=%d ready=%d)\n", total, which, assigned, ready);
+
+    int  fireCode = 0;
+    bool fireOk = false;
+#ifndef REMOTE_SELFTEST_FIRE
+    if(ready) {
+      Serial.println(F("    gate is live -> SKIP (build with -DREMOTE_SELFTEST_FIRE, or"));
+      Serial.println(F("    press the button / POST /api/remote/press to test the live fire)"));
+      ++skip;
+      continue;
+    }
+#endif
+    ledButton(strcmp(which, "inner") == 0 ? 'A' : 'B');
+    String resp = fireGateOnMain(which, &fireOk, &fireCode);
+    Serial.printf("    fire resp: %s\n", resp.c_str());
+    delay(250);
+    mainRequest("GET", "/api/gate", b);
+    String errAfter = jsonStr(b, "lastFireError");
+    mainRequest("GET", "/api/status", b);
+    String modeAfter = jsonStr(b, "mode");
+    Serial.printf("    lastFireError '%s' -> '%s'   node mode '%s'\n",
+                  errBefore.c_str(), errAfter.c_str(), modeAfter.c_str());
+
+    // PASS = the press reached the node (real HTTP reply) AND, if it fired,
+    // the node reacted (mode/playback or a new lastFireError).
+    bool reached = fireCode > 0;
+    bool reacted = fireOk || modeAfter == "playback" || jsonBool(b, "busy") ||
+                   (errAfter.length() && errAfter != errBefore) ||
+                   (!ready && fireCode >= 400);   // unassigned -> expected reject
+    bool p = reached && reacted;
+    Serial.printf("    press->node: reached=%d reacted=%d  %s (HTTP %d)\n",
+                  reached, reacted, p ? "PASS" : "FAIL", fireCode);
+    if(p) ++pass;
+    stWaitIdle(4000);
+  }
+
+  Serial.printf("========== SELF-TEST  %d PASS / %d SKIP / %d total  -> %s ==========\n\n",
+                pass, skip, total, (pass + skip == total) ? "OK" : "FAIL");
+}
+#endif  // REMOTE_SELFTEST
 
 // -----------------------------------------------------------------------------
 // Wi-Fi pairing: join the main unit's SoftAP
@@ -276,40 +458,64 @@ static void connectToMain() {
 // Display
 // -----------------------------------------------------------------------------
 #ifndef REMOTE_HEADLESS
+// One button row: "A inner  sample01  READY" / "B outer  (no sample)".
+static void drawGateRow(int y, char label, const char* which, const String& sample, bool ready) {
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, y, String(label) + " " + which);
+  display.drawString(46, y, sample.length() ? sample : String("(no sample)"));
+  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.drawString(128, y, sample.length() ? (ready ? "READY" : "wait") : "");
+}
+
 static void drawStatus() {
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
 
-  const bool stale = (mainView.fetchedMs == 0) || (millis() - mainView.fetchedMs > 6000);
+  const bool online = linkUp && mainView.valid &&
+                      mainView.fetchedMs && (millis() - mainView.fetchedMs < 6000);
+
+  if(!online) {
+    display.setFont(ArialMT_Plain_24);
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.drawString(64, 6, "OFFLINE");
+    display.setFont(ArialMT_Plain_10);
+    if(!linkUp) {
+      display.drawString(64, 34, "out of range");
+      display.drawString(64, 48, "scanning " + String(AP_SSID_BASE) + "-*");
+    } else {
+      display.drawString(64, 34, "no reply from node");
+      display.drawString(64, 48, joinedSsid);
+    }
+    display.display();
+    return;
+  }
+
+  // --- online ---------------------------------------------------------------
+  // node state: idle / SENDING (playback) / BUSY (recording|sweeping)
+  const char* state = "idle";
+  if(mainView.mode == "playback")      state = "SENDING";
+  else if(mainView.busy)               state = "BUSY";
 
   display.setFont(ArialMT_Plain_16);
-  if(!linkUp) {
-    display.drawString(0, 0, "no link");
-  } else if(!mainView.valid || stale) {
-    display.drawString(0, 0, "main offline");
-  } else {
-    display.drawString(0, 0, String(mainView.frequencyHz / 1e6, 3) + " MHz");
-  }
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, "ONLINE");
+  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.drawString(128, 2, state);
+
+  display.drawLine(0, 20, 128, 20);
+
+  drawGateRow(24, 'A', "inner", mainView.innerSample, mainView.innerReady);
+  drawGateRow(38, 'B', "outer", mainView.outerSample, mainView.outerReady);
 
   display.setFont(ArialMT_Plain_10);
-  if(linkUp && mainView.valid && !stale) {
-    display.drawString(0, 18, String(mainView.radio ? "radio OK  " : "radio ??  ") + mainView.mode
-                              + (mainView.busy ? " *" : ""));
-    display.drawString(0, 30, "link " + String(WiFi.RSSI()) + "dBm  heap " + String(mainView.heap / 1024) + "k");
-    display.drawString(0, 42, "A:" + (mainView.innerSample.length() ? mainView.innerSample : String("--"))
-                              + (mainView.innerReady ? "" : "?"));
-    display.drawString(64, 42, "B:" + (mainView.outerSample.length() ? mainView.outerSample : String("--"))
-                              + (mainView.outerReady ? "" : "?"));
-  } else {
-    display.drawString(0, 20, linkUp ? ("polling " + String(MAIN_IP)) : ("scan " + String(AP_SSID_BASE) + "-*"));
-    display.drawString(0, 32, "joined: " + (joinedSsid.length() ? joinedSsid : String("(none)")));
-  }
-
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
   if(toast.length() && millis() < toastUntilMs) {
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(0, 54, toast);
+    display.drawString(0, 52, toast);
   } else {
-    display.drawString(0, 54, "[A] inner   [B] outer");
+    display.drawString(0, 52, "node " + (mainView.radio ? String("radio ok") : String("radio ?")));
+    display.setTextAlignment(TEXT_ALIGN_RIGHT);
+    display.drawString(128, 52, String(WiFi.RSSI()) + "dBm");
   }
   display.display();
 }
@@ -328,24 +534,23 @@ static void showToast(const String& s) {
 // -----------------------------------------------------------------------------
 struct Button {
   uint8_t  pin;
+  char     id;              // 'A' inner, 'B' outer
   const char* which;
   bool     stable = true;   // pull-up: released = HIGH = true
   bool     lastRead = true;
   uint32_t lastChangeMs = 0;
 };
-Button btnA{PIN_BTN_A, "inner"};
-Button btnB{PIN_BTN_B, "outer"};
+Button btnA{PIN_BTN_A, 'A', "inner"};
+Button btnB{PIN_BTN_B, 'B', "outer"};
 
-static void doFire(const char* which) {
+static void doFire(char id, const char* which) {
+  ledButton(id);
   if(!linkUp) { showToast("no link to main"); return; }
   if(mainView.valid && mainView.busy) { showToast("main busy"); return; }
 
   showToast(String("firing ") + which + "...");
-  digitalWrite(PIN_LED, LOW);
-
   bool ok = false;
   String resp = fireGateOnMain(which, &ok);
-  digitalWrite(PIN_LED, HIGH);
 
   if(ok) {
     showToast(String("sent ") + which + ": " + jsonStr(resp, "sampleName"));
@@ -364,7 +569,7 @@ static void serviceButton(Button& b) {
   }
   if(millis() - b.lastChangeMs > BTN_DEBOUNCE_MS && r != b.stable) {
     b.stable = r;
-    if(r == LOW) doFire(b.which);   // falling edge = press
+    if(r == LOW) doFire(b.id, b.which);   // falling edge = press
   }
 }
 
@@ -404,6 +609,7 @@ static void handleRemotePress() {
     server.send(400, "application/json", "{\"ok\":false,\"error\":\"which must be inner or outer\"}");
     return;
   }
+  ledButton(which == "inner" ? 'A' : 'B');
   if(!linkUp) {
     server.send(502, "application/json", "{\"ok\":false,\"error\":\"remote has no link to main\"}");
     return;
@@ -437,7 +643,8 @@ void setup() {
   Serial.printf("cc1101 remote %s  role=remote\n", FIRMWARE_VERSION);
 
   pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_LED, HIGH);
+  analogWriteRange(1023);
+  ledLevel(0);
   pinMode(PIN_BTN_A, INPUT_PULLUP);
   pinMode(PIN_BTN_B, INPUT_PULLUP);
 
@@ -484,6 +691,18 @@ void loop() {
     refreshMainView();
   }
 
+#ifdef REMOTE_SELFTEST
+  static uint32_t lastSelftestMs = 0;
+  static bool selftestPrimed = false;
+  if(linkUp && mainView.valid && (!selftestPrimed || now - lastSelftestMs > 45000)) {
+    selftestPrimed = true;
+    lastSelftestMs = now;
+    stSnapshot();
+    stRun();
+    lastPollMs = 0;   // refresh the cached view after
+  }
+#endif
+
 #ifndef REMOTE_HEADLESS
   static uint32_t lastDraw = 0;
   if(now - lastDraw > 250) { lastDraw = now; drawStatus(); }
@@ -498,15 +717,8 @@ void loop() {
                   mainView.radio, linkUp ? WiFi.RSSI() : 0);
   }
 
-  // idle LED: dim heartbeat when linked, faster blink when not
-  static uint32_t lastBlink = 0;
-  const uint32_t period = linkUp ? 2000 : 300;
-  if(now - lastBlink > period) {
-    lastBlink = now;
-    digitalWrite(PIN_LED, LOW);
-    delay(8);
-    digitalWrite(PIN_LED, HIGH);
-  }
+  updateLed(linkUp && mainView.valid && mainView.fetchedMs &&
+            (now - mainView.fetchedMs < 6000));
 
   yield();
 }

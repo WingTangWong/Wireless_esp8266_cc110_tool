@@ -268,10 +268,22 @@ A second board runs `src/remote/` (env `d1_mini_remote`) as a paired remote:
 On boot it scans for the strongest SSID starting with `<ap_ssid>-`, joins it
 with `ap_pass` (both from the same `secrets.ini` that built the main firmware —
 **paired by default**), then polls `http://192.168.4.1/api/status` and
-`/api/gate` every ~1.5 s. The OLED shows target frequency, radio/mode, link
-RSSI, heap, and each gate's assigned sample + ready flag. A button press does
-`POST /api/gate/fire?which=inner|outer` and shows the result. Build with
-`-DREMOTE_HEADLESS` (env `d1_mini_remote_headless`) for serial+LED only.
+`/api/gate` every ~1.5 s. A button press does `POST /api/gate/fire?which=…` and
+shows the result.
+
+**OLED:** no Wi-Fi link / no reply → big **OFFLINE**; linked → the node's
+**idle / SENDING / BUSY** state and, per button, the assigned sample name +
+**READY** flag.
+
+**LED** (the indicator when headless): offline → slow dim pulse; online → slow
+mid-brightness pulse; button A → fast single-pulse loop; button B → fast
+double-pulse with a long gap.
+
+Envs: **`d1_mini_remote`** (OLED), **`d1_mini_remote_headless`** (serial + LED),
+**`d1_mini_remote_selftest`** (headless + verbose serial + a loop that dumps
+every node endpoint and drives `/api/tune` and `/api/capture/start` to confirm
+the node's state changes; live assigned gates are skipped unless built with
+`-DREMOTE_SELFTEST_FIRE`).
 
 The remote also serves a tiny HTTP surface **on its own IP** (on the main
 unit's SoftAP subnet):

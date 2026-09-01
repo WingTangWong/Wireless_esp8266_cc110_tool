@@ -27,10 +27,20 @@ verified by the Python port instead.
 unit's SoftAP (`cc1101-setup-d0867b`, paired via the shared `ap_pass`), polled
 `/api/status` + `/api/gate`, and parsed them correctly (`mode=idle radio=1`,
 RSSI -31). Buttons + `/api/remote/press` fire the gate via the main unit; a
-`/api/remote/status` endpoint exposes the cached view. `tests/test_remote.py`
-covers the remote surface + the remote→main trigger path (skips without
-`CC1101_REMOTE_HOST`). Still to verify on hardware: OLED rendering, a physical
-button press, and running the remote suite from a host on the SoftAP.
+`/api/remote/status` endpoint exposes the cached view. OLED shows OFFLINE / node
+idle-SENDING-BUSY / per-button READY; the onboard LED PWM-pulses per state.
+`tests/test_remote.py` covers the remote surface + the remote→main trigger path
+(skips without `CC1101_REMOTE_HOST`).
+
+The **`d1_mini_remote_selftest`** build was run on the second board: it pulled
+`/api/status|gate|selftest|config|samples` from the node over Wi-Fi to serial,
+then drove `/api/tune` (freq changed and read back) and `/api/capture/start`
+(node reached `recording`) — **2 PASS / 2 SKIP → OK, repeatable**. The two
+button/gate steps skip because the user's gates are live+assigned (would actuate
+real hardware); a physical press / `POST /api/remote/press` /
+`-DREMOTE_SELFTEST_FIRE` exercises that path.
+
+Still to verify: OLED rendering + a physical button press (display not wired).
 See TASKS "Wi-Fi remote".
 
 Hardware: firmware `0b136ca` flashed to a D1 Mini (MAC 5c:cf:7f:d0:86:7b) on
