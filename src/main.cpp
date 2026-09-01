@@ -270,8 +270,9 @@ struct GateAssignment {
 
 struct GateConfigFile {
   char magic[4];          // "GATE"
-  uint8_t version;        // 1
-  uint8_t reserved[3];
+  uint8_t version;        // 2 (v1 had no `enabled` byte and was always enabled)
+  uint8_t enabled;        // 0 = operator page / fire disabled
+  uint8_t reserved[2];
   GateAssignment inner;
   GateAssignment outer;
 };
@@ -279,6 +280,8 @@ struct GateConfigFile {
 
 GateAssignment gateInner{};
 GateAssignment gateOuter{};
+bool gateEnabled = true;
+String gateLastFireError;   // set async by fireGate(); surfaced on /api/gate
 
 bool gateFireRequested = false;
 GateAssignment gateFirePlan{};
@@ -678,24 +681,27 @@ static bool gateSampleExists(const GateAssignment& a) {
 static void gateLoadConfig() {
   gateInner = GateAssignment{};
   gateOuter = GateAssignment{};
+  gateEnabled = true;
 
   File f = LittleFS.open(GATE_CONFIG_PATH, "r");
   if(!f) return;
 
   GateConfigFile c{};
   bool ok = f.read(reinterpret_cast<uint8_t*>(&c), sizeof(c)) == sizeof(c) &&
-            memcmp(c.magic, "GATE", 4) == 0 && c.version == 1;
+            memcmp(c.magic, "GATE", 4) == 0 && (c.version == 1 || c.version == 2);
   f.close();
   if(!ok) return;
 
   gateInner = c.inner;
   gateOuter = c.outer;
+  gateEnabled = (c.version >= 2) ? (c.enabled != 0) : true;
 }
 
 static bool gateSaveConfig() {
   GateConfigFile c{};
   memcpy(c.magic, "GATE", 4);
-  c.version = 1;
+  c.version = 2;
+  c.enabled = gateEnabled ? 1 : 0;
   c.inner = gateInner;
   c.outer = gateOuter;
 
@@ -710,14 +716,20 @@ static bool gateSaveConfig() {
 // frequency/bandwidth, forces maximum TX power, replays, then restores the
 // dashboard's RX state and target frequency.
 static bool fireGate(const GateAssignment& a) {
-  if(!gateAssignmentValid(a)) return false;
+  if(!gateAssignmentValid(a)) {
+    gateLastFireError = "assignment invalid at fire time";
+    return false;
+  }
 
   // Remember the dashboard's radio state before loadSample() overwrites it.
   const uint32_t savedFreq = targetFrequencyHz;
   const uint16_t savedBw = targetBandwidthKhz;
   const int savedPwr = txPowerDbm;
 
-  if(!loadSample(String(a.sampleName))) return false;  // note: clobbers in-memory capture
+  if(!loadSample(String(a.sampleName))) {   // note: clobbers in-memory capture
+    gateLastFireError = "sample '" + String(a.sampleName) + "' missing or unreadable";
+    return false;
+  }
 
   targetFrequencyHz = a.frequencyHz;
   targetBandwidthKhz = a.bandwidthKhz;
@@ -732,6 +744,7 @@ static bool fireGate(const GateAssignment& a) {
   targetBandwidthKhz = savedBw;
   txPowerDbm = savedPwr;
   restoreTargetRx();
+  gateLastFireError = "";
   return true;
 }
 
@@ -1184,7 +1197,9 @@ async function load(){
  try{let r=await fetch('/api/gate',{cache:'no-store'});let g=await r.json();
   for(let w of ['inner','outer']){let a=g[w];
    $('n-'+w).textContent=a.assigned?(a.sampleName+(a.ready?'':' — unavailable')):'unassigned';
-   $('b-'+w).disabled=busy||!a.ready;}
+   $('b-'+w).disabled=busy||!a.ready||!g.enabled;}
+  if(!g.enabled&&!busy)$('toast').textContent='Gate control is disabled (re-enable on the assignment page)';
+  else if(g.lastFireError&&!busy)$('toast').textContent='Last fire failed: '+g.lastFireError;
  }catch(e){$('toast').textContent='status error';}
 }
 async function fire(w){
@@ -1222,6 +1237,9 @@ a{color:#6aa8ff;font-size:12px}.muted{color:#8b9199;font-size:12px}
 <p class="muted">Pick which saved recording each gate button replays. On a fire the
 device re-applies the frequency/bandwidth set here and transmits at the CC1101's
 maximum power (+12 dBm) regardless of any stored power value.</p>
+<div class="card"><label style="flex-direction:row;align-items:center;gap:8px">
+<input type="checkbox" id="genable"> Gate operator page enabled</label>
+<span class="msg" id="gemsg"></span></div>
 <div id="cards"></div>
 <p><a href="/gate">Gate control</a> &nbsp;·&nbsp; <a href="/">Dashboard</a></p>
 <template id="tpl">
@@ -1247,6 +1265,9 @@ async function j(u,o){let r=await fetch(u,o||{cache:'no-store'});let t=await r.j
 async function load(){
  let s=await j('/api/samples');
  let g=await j('/api/gate');
+ let byName={};for(let x of s.samples)byName[x.name]=x;
+ let ge=document.getElementById('genable');ge.checked=!!g.enabled;
+ ge.onchange=async()=>{try{await j('/api/gate/enable?on='+(ge.checked?1:0),{method:'POST'});document.getElementById('gemsg').textContent=ge.checked?'enabled':'disabled';}catch(e){document.getElementById('gemsg').textContent='error: '+e.message;ge.checked=!ge.checked;}};
  let root=document.getElementById('cards');root.innerHTML='';
  for(let w of WHICH){
   let n=document.getElementById('tpl').content.cloneNode(true);
@@ -1256,7 +1277,10 @@ async function load(){
   sel.innerHTML='<option value="">- unassigned -</option>'+s.samples.map(x=>`<option>${x.name}</option>`).join('');
   let a=g[w];
   sel.value=a.assigned?a.sampleName:'';
-  card.querySelector('.f-freq').value=((a.frequencyHz||318000000)/1e6).toFixed(3);
+  let freqEl=card.querySelector('.f-freq');
+  freqEl.value=((a.frequencyHz||318000000)/1e6).toFixed(3);
+  // Picking a sample fills the frequency from that sample's capture.
+  sel.onchange=()=>{let x=byName[sel.value];if(x)freqEl.value=(x.frequencyHz/1e6).toFixed(3);};
   card.querySelector('.f-bw').value=a.bandwidthKhz||650;
   card.querySelector('.f-rep').value=a.repeats||4;
   card.querySelector('.f-inv').checked=!!a.invert;
@@ -1687,12 +1711,22 @@ static void setupRoutes() {
   // ---- Gate control -------------------------------------------------------
   server.on("/api/gate", HTTP_GET, []() {
     String s = "{\"ok\":true";
+    s += ",\"enabled\":" + jsonBool(gateEnabled);
     s += ",\"txPowerForcedDbm\":" + String(GATE_TX_POWER_DBM);
     s += ",\"minRepeats\":" + String(GATE_MIN_REPEATS);
+    s += ",\"lastFireError\":\"" + jsonEscape(gateLastFireError) + "\"";
     s += ",\"inner\":" + gateAssignmentJson(gateInner);
     s += ",\"outer\":" + gateAssignmentJson(gateOuter);
     s += "}";
     sendJson(s);
+  });
+
+  server.on("/api/gate/enable", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    if(!server.hasArg("on")) return sendError("missing on=0|1");
+    gateEnabled = server.arg("on").toInt() != 0;
+    if(!gateSaveConfig()) return sendError("could not persist gate config", 500);
+    sendJson(String("{\"ok\":true,\"enabled\":") + jsonBool(gateEnabled) + "}");
   });
 
   server.on("/api/gate/assign", HTTP_POST, []() {
@@ -1732,6 +1766,7 @@ static void setupRoutes() {
 
   server.on("/api/gate/fire", HTTP_POST, []() {
     if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    if(!gateEnabled) return sendError("gate control is disabled", 403);
     if(isBusy() || playbackRequested || gateFireRequested) return sendError("busy", 409);
 
     String which = server.arg("which");

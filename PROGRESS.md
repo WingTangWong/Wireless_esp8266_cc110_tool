@@ -47,6 +47,7 @@ flash.
 | Timer1 raw replay | ⚠️ | Implemented; end-to-end "captured remote actuates the door" not yet verified |
 | Gate control pages (`/gate`, `/gate/config`) | ⚠️ | Implemented + builds. Two-button operator page + assignment page; assignments persist to `/gate.bin` (`"GATE"` v1). POSTs are same-origin checked. Not yet exercised on hardware. |
 | Gate fire forces max TX power | ⚠️ | `fireGate()` clamps `txPowerDbm` to +12 and floors repeats at 4, restores dashboard state after. Not yet verified to actuate a real gate. |
+| Gate enable toggle + fire-error reporting | ✅ | `gate.bin` v2 (`enabled`), `POST /api/gate/enable`, `lastFireError` on `/api/gate`, config-page checkbox, sample→frequency auto-fill. Builds; not on hardware. |
 
 ## Not yet started
 
@@ -73,11 +74,11 @@ flash.
 - Everything lives in one file (~2000 lines); no module split yet.
 - `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when `main.cpp`
   itself recompiles (not on a docs-only or dep change).
-- **Gate control has no authentication.** The same-origin check on the POST
-  endpoints only stops other websites; anyone who can reach the device can open
-  `/gate` and fire a gate. Acceptable only on a trusted network / private SoftAP.
+- **Gate control has no real authentication.** There is a runtime enable/disable
+  toggle and a same-origin check, but while enabled anyone who can reach the
+  device can fire a gate. A PIN/basic-auth is still a TODO for untrusted nets.
 - `/api/gate/fire` responds `ok` before the fire runs (fire-and-forget via
-  `loop()`), matching `/api/sample/play`; a load failure is not reported back.
+  `loop()`); a load failure now lands in `lastFireError` on the next `/api/gate`.
 - Gate `fireGate()` calls `loadSample()`, which overwrites whatever capture is
   currently in memory on the dashboard.
 - `getMHZ()` readback from some SmartRC/CC1101 combos returns 0.0; code

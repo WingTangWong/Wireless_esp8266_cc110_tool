@@ -191,7 +191,12 @@ def cmd_samples(args):
 
 def cmd_gate(args):
     d = api(args, "/api/gate")
-    lines = [f"forced TX power: +{d.get('txPowerForcedDbm')} dBm  min repeats: {d.get('minRepeats')}"]
+    lines = [
+        f"{'ENABLED' if d.get('enabled') else 'DISABLED'}  "
+        f"forced TX power: +{d.get('txPowerForcedDbm')} dBm  min repeats: {d.get('minRepeats')}"
+    ]
+    if d.get("lastFireError"):
+        lines.append(f"  last fire error: {d['lastFireError']}")
     for which in ("inner", "outer"):
         a = d.get(which, {})
         lines.append(
