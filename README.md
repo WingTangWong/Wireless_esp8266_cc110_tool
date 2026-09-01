@@ -3,7 +3,8 @@
 A browser-controlled 318 MHz (300–348 MHz band) sub-GHz analysis and replay tool
 built on a WeMOS/LOLIN D1 Mini (ESP8266) and a CC1101 transceiver. It provides an
 RSSI spectrum sweep, raw OOK/ASK capture and replay, pulse-timing analysis, and
-focused recognizers for Linear 10-bit and MegaCode 24-bit garage/gate remotes.
+focused recognizers for Linear 10-bit, MegaCode 24-bit, and EV1527/PT2262
+garage/gate remotes.
 
 The original target is a MegaCode-style garage door remote at 318.000 MHz, but
 anything in the CC1101 300–348 MHz range can be tuned, captured, and replayed.
@@ -202,12 +203,14 @@ same-level runs.
 ### Analysis (`decodeCurrentJson`)
 2-means clustering of pulse widths (overall, and per HIGH/LOW level) classifies
 the encoding family (pulse-distance/PPM, pulse-width/PWM, complementary pairs),
-emits a best-effort candidate bitstring (normal and inverted), and runs two
-focused recognizers:
+emits a best-effort candidate bitstring (normal and inverted), and runs three
+focused recognizers (in `src/decode.cpp`, unit-tested via `pio test -e native`):
 
 - **Linear 10-bit** – ~500/1500 µs pulse pairs with a ~21 ms frame guard.
 - **MegaCode 24-bit** – ~1 ms pulse in a 6 ms PPM frame, 13 ms header low,
   leading `1` start bit; decodes facility / serial / button fields.
+- **EV1527 / PT2262 24-bit** – ~31·Te sync gap then 24 short-long/long-short
+  bits; Te derived from the sync gap; reports Te, 20-bit address, 4-bit button.
 
 ### Replay (`replayCurrent`)
 Timer1 in one-shot mode (5 MHz / `TIM_DIV16`, 5 ticks per µs) drives GDO0 through

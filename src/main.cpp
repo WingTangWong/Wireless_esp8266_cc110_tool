@@ -30,7 +30,7 @@
     - Tune and fine-adjust around a target frequency
     - Raw OOK/ASK capture from GDO2 and raw playback through GDO0
     - Pulse-width histogram and generic timing/encoding analysis
-    - Focused Linear 10-bit and MegaCode 24-bit recognizers
+    - Focused Linear 10-bit, MegaCode 24-bit, EV1527/PT2262 24-bit recognizers
     - Save multiple raw samples to LittleFS
     - Load/decode/delete any saved sample
     - Timer1-driven raw playback of any saved sample
@@ -792,7 +792,10 @@ static String decodeCurrentJson() {
   };
   rfd::ProtocolDecode linear = rfd::tryLinear(span);
   rfd::ProtocolDecode mega = rfd::tryMegaCode(span, mp);
-  rfd::ProtocolDecode specific = linear.matched ? linear : mega;
+  rfd::ProtocolDecode ev = rfd::tryEV1527(span, (uint32_t)all.shortUs);
+  rfd::ProtocolDecode specific = linear.matched ? linear
+                               : mega.matched ? mega
+                               : ev;
 
   String out = "{\"ok\":true";
   out += ",\"frequencyHz\":" + String(targetFrequencyHz);

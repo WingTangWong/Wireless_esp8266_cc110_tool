@@ -198,6 +198,44 @@ void test_megacode_roundtrip() {
   TEST_ASSERT_EQUAL_size_t(24, strlen(d.bits));
 }
 
+// --- EV1527 / PT2262 recognizer ---------------------------------
+
+static Capture ev1527(uint32_t code24, uint32_t te = 350) {
+  Capture c;
+  c.add(te, 1);              // brief preamble HIGH
+  c.add(te * 31, 0);         // sync gap
+  for (int i = 23; i >= 0; --i) {
+    if ((code24 >> i) & 1) { c.add(te * 3, 1); c.add(te, 0); }   // 1
+    else                   { c.add(te, 1);     c.add(te * 3, 0); } // 0
+  }
+  c.add(te * 31, 0);         // trailing sync
+  return c;
+}
+
+void test_ev1527_roundtrip() {
+  const uint32_t code = 0xA5C3Du & 0xFFFFFF;
+  Capture c = ev1527(code);
+  ProtocolDecode d = tryEV1527(c.span(), 350);
+  TEST_ASSERT_TRUE(d.matched);
+  TEST_ASSERT_EQUAL_STRING("EV1527 / PT2262 24-bit", d.name);
+  TEST_ASSERT_EQUAL_UINT32(code, d.data);
+  TEST_ASSERT_EQUAL_size_t(24, strlen(d.bits));
+}
+
+void test_ev1527_te_from_clusters() {
+  Capture c = ev1527(0x123456u, 300);
+  Clusters a = kmeans2All(c.span());
+  ProtocolDecode d = tryEV1527(c.span(), (uint32_t)a.shortUs);
+  TEST_ASSERT_TRUE(d.matched);
+  TEST_ASSERT_EQUAL_UINT32(0x123456u, d.data);
+}
+
+void test_ev1527_rejects_megacode() {
+  Capture c = megacode(0x800000u | 0x155555u);
+  ProtocolDecode d = tryEV1527(c.span(), 1000);
+  TEST_ASSERT_FALSE(d.matched);
+}
+
 void test_megacode_rejects_noise() {
   Capture c;
   for (int i = 0; i < 40; ++i) { c.add(700, 1); c.add(700, 0); }
@@ -238,6 +276,9 @@ int main(int, char**) {
   RUN_TEST(test_candidate_bits_cap_220);
   RUN_TEST(test_megacode_roundtrip);
   RUN_TEST(test_megacode_rejects_noise);
+  RUN_TEST(test_ev1527_roundtrip);
+  RUN_TEST(test_ev1527_te_from_clusters);
+  RUN_TEST(test_ev1527_rejects_megacode);
   RUN_TEST(test_histogram_bins_sum);
   return UNITY_END();
 }

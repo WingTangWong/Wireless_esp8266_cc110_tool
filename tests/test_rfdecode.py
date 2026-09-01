@@ -60,3 +60,28 @@ def test_classify_unknown_on_uniform_timing():
 def test_empty_input_is_safe():
     c = rfdecode.kmeans2_all([])
     assert c == rfdecode.Clusters()
+
+
+def _ev1527(code24, te=350):
+    out = [(te, 1), (te * 31, 0)]
+    for i in range(23, -1, -1):
+        if (code24 >> i) & 1:
+            out += [(te * 3, 1), (te, 0)]
+        else:
+            out += [(te, 1), (te * 3, 0)]
+    out.append((te * 31, 0))
+    return out
+
+
+def test_ev1527_roundtrips():
+    code = 0xA5C3D & 0xFFFFFF
+    d = rfdecode.try_ev1527(_ev1527(code), te_hint=350)
+    assert d is not None
+    assert d["data"] == code
+    assert d["address"] == (code >> 4) & 0xFFFFF
+    assert d["button"] == code & 0xF
+
+
+def test_ev1527_none_on_noise():
+    noise = [(700, 1), (700, 0)] * 30
+    assert rfdecode.try_ev1527(noise, te_hint=350) is None
