@@ -35,8 +35,8 @@ jobs:
       - name: Build the serial-trace variant
         run: pio run -e d1_mini_debug
 
-      - name: Build the Wi-Fi remote (OLED + headless)
-        run: pio run -e d1_mini_remote -e d1_mini_remote_headless
+      - name: Build the Wi-Fi remote (OLED / headless / self-test)
+        run: pio run -e d1_mini_remote -e d1_mini_remote_headless -e d1_mini_remote_selftest
 
   host:
     name: Host tooling + tests
