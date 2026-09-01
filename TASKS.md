@@ -32,10 +32,12 @@ each section. Check items off as they land; move notes to `PROGRESS.md`.
       only in `secrets.ini`.
 - [x] Scrub git history — the early commits that carried the station SSID/pass
       and old SoftAP pass in `src/main.cpp` were squashed into the "Initial
-      import" commit (2026-09-01), then reflog-expired + `gc`d. No commit in
-      the repo contains real credentials any more.
-- [ ] **Still rotate the actual station Wi-Fi password on the router** — it was
-      exposed locally before the scrub; treat it as compromised.
+      import" commit (2026-09-01), then reflog-expired + `gc`d, and the doc
+      prose that quoted the literals was cleaned too. A full object-database
+      scan finds zero credential strings. Done *before* the repo was pushed
+      public to GitHub.
+- [ ] **Rotate the station Wi-Fi password on the router** — it was on the build
+      machine before the scrub, so treat it as compromised regardless.
 - [ ] Consider a first-boot captive portal (WiFiManager) so a fresh unit needs
       no `secrets.ini` at all — the reusable end state. Bigger change; separate
       from this pass.

@@ -76,11 +76,12 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 
 ## Known issues / risks
 
-- **Wi-Fi credentials** now live only in git-ignored `secrets.ini` (via
-  `CFG_WIFI_*` build defines). The early commits that had them inline in
-  `src/main.cpp` were squashed away and the reflog expired + `gc`d on
-  2026-09-01, so no commit carries a real credential. The station password
-  was exposed locally before that and should still be rotated on the router.
+- **Wi-Fi credentials** live only in git-ignored `secrets.ini` (via
+  `CFG_WIFI_*` build defines). Git history was scrubbed on 2026-09-01 (early
+  commits squashed into "Initial import", reflog expired + `gc`d, doc prose
+  cleaned) *before* the repo went public — a full object scan finds no
+  credential strings. **Residual risk:** the station password sat on the build
+  machine pre-scrub; rotate it on the router.
 - `main.cpp` is still large (~1900 lines) though the decode kernels are split
   into `decode.{h,cpp}`; a further `sample.*` / `gate.*` split is a TODO.
 - `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when `main.cpp`

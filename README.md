@@ -143,9 +143,12 @@ dashboard status row. A DNS catch-all + redirect on the AP makes the phone's
 The same web server answers on both interfaces. The SoftAP stays up even when
 the home network is out of range, so the dashboard is always reachable.
 
-> The Wi-Fi credentials that were committed before this change are still in git
-> history — rotate the actual router/AP passwords and see `TASKS.md` for the
-> history-scrub item.
+> **Credential history:** early commits once carried Wi-Fi credentials inline in
+> `src/main.cpp`. That history was squashed into the "Initial import" commit and
+> the reflog expired + `gc`d on 2026-09-01 — no commit in this repo contains a
+> real credential (verified by a full object scan). The SoftAP password was
+> rotated. The **station Wi-Fi password was exposed on the build machine before
+> the scrub**, so treat it as compromised and rotate it on the router.
 
 ## Web UI
 
