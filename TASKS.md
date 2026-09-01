@@ -232,7 +232,9 @@ on-hardware verification still pending — see `PROGRESS.md`.
 
 ## P4 – Docs / project
 
-- [ ] Wiring photo / diagram in `README.md`.
+- [x] Wiring diagram in `README.md` (mermaid) + antenna / 3V3-only note.
+      A real photo would still be nice.
 - [ ] Screenshot of the web UI.
 - [x] Document the sample `.bin` format — `docs/sample-format.md`.
-- [ ] Note tested CC1101 board variant(s) and antenna used.
+- [ ] Note tested CC1101 board variant(s) and antenna used (needs hardware).
+- [ ] Replace the mermaid wiring diagram with a real photo of the build.

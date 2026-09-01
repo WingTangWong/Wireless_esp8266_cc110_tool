@@ -26,9 +26,31 @@ anything in the CC1101 300–348 MHz range can be tuned, captured, and replayed.
 | Power | VCC | 3V3 | — |
 | Ground | GND | GND | — |
 
-RX capture (GDO2) and TX playback (GDO0) use separate MCU pins so the two paths
-never contend. The CC1101 runs in asynchronous serial mode (`PKTFORMAT=3`),
-ASK/OOK modulation, no sync/preamble/whitening/Manchester/FEC/CRC.
+```mermaid
+graph LR
+    subgraph D1["WeMOS D1 Mini (ESP8266)"]
+        D5; D6; D7; D8; D2; D1n["D1"]; V3["3V3"]; G1["GND"]
+    end
+    subgraph CC["CC1101 module"]
+        SCK; MISO; MOSI; CSN; GDO0; GDO2; VCC; GND
+    end
+    D5 -- SCK --> SCK
+    MISO -- MISO --> D6
+    D7 -- MOSI --> MOSI
+    D8 -- CSN --> CSN
+    D2 -- "async TX data" --> GDO0
+    GDO2 -- "async RX data" --> D1n
+    V3 --- VCC
+    G1 --- GND
+```
+
+RX capture (GDO2 → D1) and TX playback (D2 → GDO0) use separate MCU pins so the
+two paths never contend. The CC1101 runs in asynchronous serial mode
+(`PKTFORMAT=3`), ASK/OOK modulation, no sync/preamble/whitening/Manchester/FEC/CRC.
+
+Power the CC1101 from 3V3 only — its I/O is **not** 5 V tolerant. A quarter-wave
+whip for the target band (~24 cm at 318 MHz, or a tuned helical) on the module's
+ANT pad markedly improves both capture and replay range.
 
 ## Software
 
