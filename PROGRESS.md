@@ -4,18 +4,25 @@ _Last updated: 2026-08-31_
 
 ## Status summary
 
-Firmware builds clean for `d1_mini`. Implemented in `src/main.cpp`: concurrent
-AP+station Wi-Fi, the analysis dashboard, RSSI sweep, raw capture + timing
-analysis, LittleFS sample storage, Timer1 replay, the two-button gate control
-pages, and the verification endpoints (`/api/selftest`, `/api/capture/pulses`,
-richer `/api/status` + `/api/sweep/data`). Host side: `tools/rfprobe.py` CLI,
-`tools/rfdecode.py` analysis port, a pytest suite, and GitHub Actions CI.
+Firmware (`src/main.cpp` + `src/decode.{h,cpp}`): concurrent AP+station Wi-Fi
+with a per-device SSID and captive portal, the analysis dashboard, RSSI sweep
+with peak/offset readout, raw capture + timing analysis, Linear / MegaCode /
+EV1527 recognizers, a rolling-code advisory, LittleFS sample storage with
+rename, Timer1 replay, the two-button gate control pages with an enable toggle
+and fire-error reporting, and verification endpoints (`/api/selftest`,
+`/api/capture/pulses`, richer `/api/status` + `/api/sweep/data`). Optional
+`-DCC1101_TRACE` serial-trace build.
+
+Host side: `tools/rfprobe.py` CLI (incl. `export` to Flipper `.sub`),
+`tools/rfdecode.py` analysis port, a pytest suite (pure + device), 19 native
+Unity tests for the DSP kernels, `ruff`, and GitHub Actions CI.
+
+Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅, `native` ✅.
 
 Hardware reality: only the pre-2026-08-29 feature set (SPI, station Wi-Fi, RSSI
-sweep) has ever run on a board. **Everything added since — SoftAP, gate control,
-all verification endpoints — builds but is unverified on hardware.** The pytest
-suite (`CC1101_HOST=… pytest`) is the intended way to check most of it after a
-flash.
+sweep) has ever run on a board. **Everything added since builds and is
+unit/CLI-tested but is unverified on hardware.** After a flash,
+`CC1101_HOST=… pytest` is the intended way to check most of it.
 
 ## What works
 
