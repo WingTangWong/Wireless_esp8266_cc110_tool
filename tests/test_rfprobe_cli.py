@@ -65,6 +65,24 @@ def test_sample_play_needs_name(dev):
         run(dev, "sample", "play")
 
 
+def test_export_sub_and_csv(dev, tmp_path, capsys):
+    sub = tmp_path / "cap.sub"
+    run(dev, "export", str(sub), "--sample", "sample01")
+    text = sub.read_text()
+    assert text.startswith("Filetype: Flipper SubGhz RAW File")
+    assert "Protocol: RAW" in text
+    assert "RAW_Data: " in text
+    # fake device returns 16 signed values on one line
+    raw_line = next(ln for ln in text.splitlines() if ln.startswith("RAW_Data:"))
+    vals = raw_line.split(":", 1)[1].split()
+    assert len(vals) == 16
+    assert any(int(v) > 0 for v in vals) and any(int(v) < 0 for v in vals)
+
+    csv = tmp_path / "cap.csv"
+    run(dev, "export", str(csv))
+    assert csv.read_text().splitlines()[0] == "duration_us,level"
+
+
 def test_unreachable_host_exits_2():
     with pytest.raises(SystemExit) as e:
         rfprobe.main(["--host", "127.0.0.1:1", "--timeout", "1", "status"])

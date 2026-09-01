@@ -198,11 +198,11 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [x] Flag capture truncation — `captureTruncated` + `maxPulses` on
       `/api/status`, `truncated` on `/api/capture/pulses`, and the dashboard
       capture line says "TRUNCATED at N pulses".
-- [ ] HTTP download of a saved `.bin` sample (and upload) for off-device
-      analysis. (`/api/capture/pulses` already exposes the *in-memory* capture
-      as JSON; this is about the saved files and round-tripping.)
-- [ ] Export capture as a Flipper `.sub` file. (Raw µs list: done via
-      `/api/capture/pulses`.)
+- [x] Export capture as a Flipper `.sub` file / CSV / signed-µs text —
+      `rfprobe.py export <out> [--sample NAME]` (loads the sample, pulls
+      `/api/capture/pulses`, writes the chosen format).
+- [ ] Still open: raw `.bin` upload back to the device, and download straight
+      from the browser (rfprobe covers the host path).
 - [x] EV1527 / PT2262 24-bit recognizer (`rfd::tryEV1527`, self-calibrating Te
       from the sync gap; 3 Unity tests + a Python port in `rfdecode.py`).
 - [ ] More recognizers: Hs2303, Nice FLO, CAME, Holtek HT6P20 — same pattern

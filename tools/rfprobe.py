@@ -9,6 +9,7 @@ Stdlib only. Point it at a flashed, networked D1 Mini:
     tools/rfprobe.py sweep 317.7 318.3 --step 20 --json | jq .summary
     tools/rfprobe.py record 2000 --decode
     tools/rfprobe.py sample play inner_gate --repeat 3
+    tools/rfprobe.py export capture.sub --sample inner_gate
     tools/rfprobe.py watch --interval 1
     tools/rfprobe.py gate
 
@@ -265,6 +266,52 @@ def cmd_raw(args):
     sys.stdout.write("\n")
 
 
+def _signed_durations(pulses):
+    """[[dur, level], ...] -> [+dur for HIGH, -dur for LOW]."""
+    return [d if lv else -d for d, lv in pulses]
+
+
+def _write_sub(path, freq_hz, pulses):
+    vals = _signed_durations(pulses)
+    lines = [
+        "Filetype: Flipper SubGhz RAW File",
+        "Version: 1",
+        f"Frequency: {int(freq_hz)}",
+        "Preset: FuriHalSubGhzPresetOok650Async",
+        "Protocol: RAW",
+    ]
+    for i in range(0, len(vals), 512):
+        lines.append("RAW_Data: " + " ".join(str(v) for v in vals[i:i + 512]))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def _write_csv(path, freq_hz, pulses):
+    rows = ["duration_us,level"]
+    rows += [f"{d},{lv}" for d, lv in pulses]
+    path.write_text("\n".join(rows) + "\n")
+
+
+def _write_txt(path, freq_hz, pulses):
+    path.write_text(" ".join(str(v) for v in _signed_durations(pulses)) + "\n")
+
+
+def cmd_export(args):
+    import pathlib
+
+    if args.sample:
+        api(args, "/api/sample/load", {"name": args.sample})
+    d = api(args, "/api/capture/pulses")
+    pulses = d.get("pulses", [])
+    if not pulses:
+        raise ApiError("no pulses to export (record or load a sample first)")
+
+    out = pathlib.Path(args.outfile)
+    ext = out.suffix.lower()
+    writer = {".sub": _write_sub, ".csv": _write_csv}.get(ext, _write_txt)
+    writer(out, d.get("frequencyHz", 0), pulses)
+    print(f"wrote {len(pulses)} pulses to {out} ({ext or 'txt'})")
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default=DEFAULT_HOST, help=f"device host (default {DEFAULT_HOST})")
@@ -316,6 +363,11 @@ def build_parser():
     w = sub.add_parser("watch", help="poll /api/status until ctrl-c")
     w.add_argument("--interval", type=float, default=2.0)
     w.set_defaults(func=cmd_watch)
+
+    e = sub.add_parser("export", help="save the in-memory capture to a file")
+    e.add_argument("outfile", help="*.sub (Flipper RAW) / *.csv / other = signed-us text")
+    e.add_argument("--sample", help="load this saved sample first")
+    e.set_defaults(func=cmd_export)
 
     raw = sub.add_parser("raw", help="call an arbitrary endpoint")
     raw.add_argument("path")

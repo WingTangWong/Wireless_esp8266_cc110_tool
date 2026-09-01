@@ -85,6 +85,7 @@ pytest suite that runs only when a flashed, networked module is reachable:
 ```bash
 tools/rfprobe.py --host cc1101.local selftest
 tools/rfprobe.py sweep 317.7 318.3 --json | jq .summary
+tools/rfprobe.py export gate.sub --sample inner_gate   # Flipper RAW / .csv / .txt
 
 python -m pip install -r requirements-dev.txt
 CC1101_HOST=cc1101.local pytest        # skips entirely with no device
