@@ -372,6 +372,35 @@ static void sendError(const String& msg, int code = 400) {
   sendJson("{\"ok\":false,\"error\":\"" + msg + "\"}", code);
 }
 
+// Parse a required query arg as a non-negative integer. Returns false (and does
+// nothing to `out`) if the arg is missing, empty, or not all digits.
+static bool argU32(const char* name, uint32_t& out) {
+  if(!server.hasArg(name)) return false;
+  String v = server.arg(name);
+  v.trim();
+  if(!v.length()) return false;
+  for(size_t i = 0; i < v.length(); ++i) {
+    if(v[i] < '0' || v[i] > '9') return false;
+  }
+  out = (uint32_t)strtoul(v.c_str(), nullptr, 10);
+  return true;
+}
+
+// Signed variant (allows a leading '-').
+static bool argI32(const char* name, int32_t& out) {
+  if(!server.hasArg(name)) return false;
+  String v = server.arg(name);
+  v.trim();
+  if(!v.length()) return false;
+  size_t start = (v[0] == '-' || v[0] == '+') ? 1 : 0;
+  if(start == v.length()) return false;
+  for(size_t i = start; i < v.length(); ++i) {
+    if(v[i] < '0' || v[i] > '9') return false;
+  }
+  out = (int32_t)strtol(v.c_str(), nullptr, 10);
+  return true;
+}
+
 static bool isBusy() {
   return captureActive || sweepActive || currentMode == "playback";
 }
@@ -1569,8 +1598,9 @@ static void setupRoutes() {
 
   server.on("/api/tune", HTTP_GET, []() {
     if(isBusy()) return sendError("busy", 409);
-    uint32_t hz = (uint32_t)server.arg("hz").toInt();
-    uint16_t bw = (uint16_t)server.arg("bw").toInt();
+    uint32_t hz = 0, bwArg = 0;
+    if(!argU32("hz", hz)) return sendError("hz is required (Hz, integer)");
+    uint16_t bw = argU32("bw", bwArg) ? (uint16_t)bwArg : 0;
     if(!valid315BandFrequency(hz)) return sendError("frequency must be 300-348 MHz");
     if(bw != 58 && bw != 270 && bw != 650) bw = DEFAULT_CAPTURE_BW_KHZ;
 
@@ -1582,7 +1612,8 @@ static void setupRoutes() {
 
   server.on("/api/nudge", HTTP_GET, []() {
     if(isBusy()) return sendError("busy", 409);
-    int32_t delta = server.arg("delta").toInt();
+    int32_t delta = 0;
+    if(!argI32("delta", delta)) return sendError("delta is required (Hz, integer)");
     int64_t candidate = (int64_t)targetFrequencyHz + delta;
     if(candidate < 0 || !valid315BandFrequency((uint32_t)candidate)) return sendError("result outside 300-348 MHz");
     targetFrequencyHz = (uint32_t)candidate;
@@ -1593,11 +1624,12 @@ static void setupRoutes() {
   server.on("/api/sweep/start", HTTP_GET, []() {
     if(isBusy()) return sendError("busy", 409);
 
-    uint32_t a = (uint32_t)server.arg("start").toInt();
-    uint32_t b = (uint32_t)server.arg("stop").toInt();
-    uint32_t step = (uint32_t)server.arg("step").toInt();
-    int dwell = server.arg("dwell").toInt();
-    int bw = server.arg("bw").toInt();
+    uint32_t a = 0, b = 0, step = 0, dwellArg = 0, bwArg = 0;
+    if(!argU32("start", a) || !argU32("stop", b) || !argU32("step", step)) {
+      return sendError("start, stop and step are required (Hz, integers)");
+    }
+    int dwell = argU32("dwell", dwellArg) ? (int)dwellArg : 3;
+    int bw = argU32("bw", bwArg) ? (int)bwArg : 650;
 
     if(!valid315BandFrequency(a) || !valid315BandFrequency(b) || b <= a || step < 5000) {
       return sendError("bad sweep parameters");
@@ -1641,7 +1673,8 @@ static void setupRoutes() {
 
   server.on("/api/capture/start", HTTP_GET, []() {
     if(isBusy()) return sendError("busy", 409);
-    uint32_t ms = (uint32_t)server.arg("ms").toInt();
+    uint32_t ms = DEFAULT_CAPTURE_MS;
+    argU32("ms", ms);
     ms = constrain(ms, (uint32_t)50, MAX_CAPTURE_MS);
     startCapture(ms);
     sendJson("{\"ok\":true}");
@@ -1711,8 +1744,9 @@ static void setupRoutes() {
     String name = safeName(server.arg("name"));
     if(!loadSample(name)) return sendError("sample not found");
 
-    int repeat = server.arg("repeat").toInt();
-    playbackRepeats = (uint8_t)constrain(repeat, 1, 10);
+    uint32_t repeat = 1;
+    argU32("repeat", repeat);
+    playbackRepeats = (uint8_t)constrain((long)repeat, 1L, 10L);
     playbackInvertRequested = server.arg("invert").toInt() != 0;
     playbackRequested = true;
     sendJson("{\"ok\":true}");
@@ -1799,8 +1833,9 @@ static void setupRoutes() {
 
   server.on("/api/gate/enable", HTTP_POST, []() {
     if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
-    if(!server.hasArg("on")) return sendError("missing on=0|1");
-    gateEnabled = server.arg("on").toInt() != 0;
+    uint32_t on = 0;
+    if(!argU32("on", on) || on > 1) return sendError("on must be 0 or 1");
+    gateEnabled = (on != 0);
     if(!gateSaveConfig()) return sendError("could not persist gate config", 500);
     sendJson(String("{\"ok\":true,\"enabled\":") + jsonBool(gateEnabled) + "}");
   });
@@ -1820,8 +1855,9 @@ static void setupRoutes() {
       String name = safeName(server.arg("sampleName"));
       if(!LittleFS.exists(samplePath(name))) return sendError("sample not found");
 
-      uint32_t hz = (uint32_t)server.arg("frequencyHz").toInt();
-      uint16_t bw = (uint16_t)server.arg("bandwidthKhz").toInt();
+      uint32_t hz = 0, bwArg = 0, repArg = 0;
+      if(!argU32("frequencyHz", hz)) return sendError("frequencyHz is required (Hz, integer)");
+      uint16_t bw = argU32("bandwidthKhz", bwArg) ? (uint16_t)bwArg : 650;
       if(!valid315BandFrequency(hz)) return sendError("frequency must be 300-348 MHz");
       if(bw != 58 && bw != 270 && bw != 650) bw = 650;
 
@@ -1829,7 +1865,7 @@ static void setupRoutes() {
       a.frequencyHz = hz;
       a.bandwidthKhz = bw;
       a.txPowerDbm = GATE_TX_POWER_DBM;
-      a.repeats = (uint8_t)constrain(server.arg("repeats").toInt(), 1, 10);
+      a.repeats = (uint8_t)constrain(argU32("repeats", repArg) ? (long)repArg : 4L, 1L, 10L);
       a.invert = server.arg("invert").toInt() != 0 ? 1 : 0;
     }
 

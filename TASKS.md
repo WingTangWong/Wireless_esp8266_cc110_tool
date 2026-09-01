@@ -230,7 +230,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
       `DBG(...)` macro is a no-op otherwise. Traces boot, radio id, Wi-Fi/AP,
       capture start/stop, gate fire. (Name is `CC1101_TRACE`, not `DEBUG_SERIAL`
       — that identifier is used inside the ESP8266 core.)
-- [ ] Guard against `server.arg()` parsing surprises (empty / non-numeric).
+- [x] `argU32`/`argI32` helpers reject missing / empty / non-numeric query
+      args explicitly (used by tune, nudge, sweep/start, capture/start,
+      gate/assign, gate/enable, sample/play). `/api/config`'s optional
+      already-clamped args are left as-is.
 - [x] `/api/samples` is chunk-streamed now (one sample row at a time);
       `/api/capture/pulses` too. `/api/sweep/data` still builds one String
       (bounded at 601 points → ~15 KB; fine but could stream too).
