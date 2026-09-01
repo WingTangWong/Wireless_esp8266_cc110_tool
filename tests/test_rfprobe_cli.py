@@ -57,7 +57,11 @@ def test_sample_lifecycle(dev, capsys):
     assert "unit_test" in capsys.readouterr().out
     run(dev, "sample", "play", "unit_test", "--repeat", "3")
     assert "x3" in capsys.readouterr().out
-    run(dev, "sample", "delete", "unit_test")
+    run(dev, "raw", "/api/sample/rename", "from=unit_test", "to=renamed_test")
+    run(dev, "sample", "list")
+    out = capsys.readouterr().out
+    assert "renamed_test" in out and "unit_test" not in out
+    run(dev, "sample", "delete", "renamed_test")
 
 
 def test_sample_play_needs_name(dev):

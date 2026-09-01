@@ -209,7 +209,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
       (add to `decode.cpp`, Unity-test, wire into the `specific` chain).
 - [ ] Optional rolling-code detection / warning (KeeLoq-style) so the user
       knows a fixed replay will not work.
-- [ ] Per-sample notes / rename in the UI.
+- [x] Sample rename — `/api/sample/rename?from=&to=` + a Rename button; keeps
+      gate assignments pointing at the new name.
+- [ ] Still open: free-text per-sample notes (needs a `315R` format bump or a
+      sidecar file).
 - [x] Show the sweep-peak frequency offset vs. the configured target (done with
       the "Tune to peak" item above).
 

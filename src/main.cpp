@@ -1143,12 +1143,13 @@ async function decodeCurrent(){try{saveUiSettings();await pushRuntimeConfig();le
 async function saveCurrent(){try{saveUiSettings();await j('/api/sample/save?name='+encodeURIComponent($('sampleName').value));listSamples()}catch(e){err(e)}}
 
 async function listSamples(){
- try{let x=await j('/api/samples'),h='';for(let s of x.samples){let n=encodeURIComponent(s.name);h+=`<tr><td>${esc(s.name)}</td><td>${(s.frequencyHz/1e6).toFixed(6)}</td><td>${s.pulseCount}</td><td>${(s.durationUs/1000).toFixed(1)} ms</td><td><button class="tiny" onclick="sampleLoad('${n}')">Load</button> <button class="tiny" onclick="sampleDecode('${n}')">Decode</button> <button class="tiny" onclick="samplePlay('${n}')">Play</button> <button class="tiny danger" onclick="sampleDelete('${n}')">Delete</button></td></tr>`}$('samples').innerHTML=h||'<tr><td colspan="5" class="muted">No saved samples.</td></tr>'}catch(e){err(e)}
+ try{let x=await j('/api/samples'),h='';for(let s of x.samples){let n=encodeURIComponent(s.name);h+=`<tr><td>${esc(s.name)}</td><td>${(s.frequencyHz/1e6).toFixed(6)}</td><td>${s.pulseCount}</td><td>${(s.durationUs/1000).toFixed(1)} ms</td><td><button class="tiny" onclick="sampleLoad('${n}')">Load</button> <button class="tiny" onclick="sampleDecode('${n}')">Decode</button> <button class="tiny" onclick="samplePlay('${n}')">Play</button> <button class="tiny" onclick="sampleRename('${n}')">Rename</button> <button class="tiny danger" onclick="sampleDelete('${n}')">Delete</button></td></tr>`}$('samples').innerHTML=h||'<tr><td colspan="5" class="muted">No saved samples.</td></tr>'}catch(e){err(e)}
 }
 async function sampleLoad(n){try{let x=await j('/api/sample/load?name='+n);$('target').value=(x.frequencyHz/1e6).toFixed(6);saveUiSettings();lastCaptureSignature='';await status();await pulseData()}catch(e){err(e)}}
 async function sampleDecode(n){try{await pushRuntimeConfig();let x=await j('/api/sample/decode?name='+n),txt=JSON.stringify(x,null,2);$('decode').textContent=txt;localStorage.setItem(DECODE_STORE,txt);lastCaptureSignature='';await status();await pulseData()}catch(e){err(e)}}
 async function samplePlay(n){try{saveUiSettings();let r=Math.max(1,Math.min(10,parseInt($('repeats').value)||1)),inv=$('invert').checked?1:0;await j('/api/sample/play?name='+n+'&repeat='+r+'&invert='+inv)}catch(e){err(e)}}
 async function sampleDelete(n){try{await j('/api/sample/delete?name='+n);listSamples()}catch(e){err(e)}}
+async function sampleRename(n){let to=prompt('New name for '+decodeURIComponent(n)+':');if(!to)return;try{await j('/api/sample/rename?from='+n+'&to='+encodeURIComponent(to));listSamples()}catch(e){err(e)}}
 
 function baseCanvas(id){let c=$(id),g=c.getContext('2d'),w=c.width,h=c.height;g.clearRect(0,0,w,h);g.fillStyle='#111418';g.fillRect(0,0,w,h);g.font='11px sans-serif';return{c,g,w,h}}
 
@@ -1704,6 +1705,26 @@ static void setupRoutes() {
     String name = safeName(server.arg("name"));
     bool ok = LittleFS.remove(samplePath(name));
     sendJson(String("{\"ok\":") + jsonBool(ok) + "}");
+  });
+
+  server.on("/api/sample/rename", HTTP_GET, []() {
+    if(isBusy()) return sendError("busy", 409);
+    String from = safeName(server.arg("from"));
+    String to = safeName(server.arg("to"));
+    if(!LittleFS.exists(samplePath(from))) return sendError("source sample not found");
+    if(LittleFS.exists(samplePath(to))) return sendError("a sample named '" + to + "' already exists");
+    if(!LittleFS.rename(samplePath(from), samplePath(to))) return sendError("rename failed", 500);
+
+    // Keep gate assignments pointing at the renamed file.
+    if(String(gateInner.sampleName) == from) {
+      strncpy(gateInner.sampleName, to.c_str(), sizeof(gateInner.sampleName) - 1);
+    }
+    if(String(gateOuter.sampleName) == from) {
+      strncpy(gateOuter.sampleName, to.c_str(), sizeof(gateOuter.sampleName) - 1);
+    }
+    gateSaveConfig();
+
+    sendJson("{\"ok\":true,\"name\":\"" + to + "\"}");
   });
 
   server.on("/api/samples", HTTP_GET, []() {

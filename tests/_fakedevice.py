@@ -140,6 +140,14 @@ def _handler(state):
             if p == "/api/sample/delete":
                 state.samples.pop(q.get("name", ""), None)
                 return self._json({"ok": True})
+            if p == "/api/sample/rename":
+                fr, to = q.get("from", ""), q.get("to", "")
+                if fr not in state.samples:
+                    return self._json({"ok": False, "error": "source sample not found"}, 400)
+                if to in state.samples:
+                    return self._json({"ok": False, "error": "exists"}, 400)
+                state.samples[to] = state.samples.pop(fr)
+                return self._json({"ok": True, "name": to})
             if p == "/api/sample/play":
                 state.go_busy("playback", 0.2)
                 return self._json({"ok": True})
