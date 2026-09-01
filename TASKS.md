@@ -193,7 +193,8 @@ on-hardware verification still pending — see `PROGRESS.md`.
         so the "sign in to network" sheet opens the dashboard.
   - [x] SoftAP SSID is `<ap_ssid>-<chipId>` (`apSsidEffective`), reported on
         `/api/status`. (AP password out of source: done in the P0 pass.)
-- [ ] Auto-pick the strongest sweep peak and offer "tune here" in the UI.
+- [x] After a sweep the UI shows the strongest bin, its offset in kHz vs the
+      configured target, and a "Tune to peak" button.
 - [x] Flag capture truncation — `captureTruncated` + `maxPulses` on
       `/api/status`, `truncated` on `/api/capture/pulses`, and the dashboard
       capture line says "TRUNCATED at N pulses".
@@ -209,7 +210,8 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [ ] Optional rolling-code detection / warning (KeeLoq-style) so the user
       knows a fixed replay will not work.
 - [ ] Per-sample notes / rename in the UI.
-- [ ] Show decoded frequency offset from the sweep vs. the configured target.
+- [x] Show the sweep-peak frequency offset vs. the configured target (done with
+      the "Tune to peak" item above).
 
 ## P3 – Code quality
 

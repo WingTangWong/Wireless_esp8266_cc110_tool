@@ -127,7 +127,8 @@ connected client count), and free heap. Sections:
 - **Target frequency** – tune to an exact MHz value, pick capture bandwidth
   (58 / 270 / 650 kHz), and nudge ±5/20/100 kHz.
 - **Frequency population / RSSI sweep** – sweep a start/stop range at a given
-  step, dwell, and RX bandwidth; bar-graph spectrum with the 8 strongest bins.
+  step, dwell, and RX bandwidth; bar-graph spectrum with the 8 strongest bins,
+  the peak's offset vs the target, and a "Tune to peak" button.
 - **Raw record** – capture raw OOK edges from GDO2 with an auto-stop timeout,
   then decode or save.
 - **Capture / decoder parameters** – async data rate, TX power, minimum pulse

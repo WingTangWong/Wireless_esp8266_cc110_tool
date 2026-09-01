@@ -985,6 +985,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px;borde
 <div class="row"><button class="primary" onclick="sweep()">Sweep</button><button onclick="focusSweep()">Target ±300 kHz</button></div>
 <canvas id="spectrum" width="960" height="270"></canvas>
 <div id="peaks" class="muted"></div>
+<div class="row"><span id="peakinfo" class="muted"></span><button id="tunepeak" class="tiny" style="display:none" onclick="tunePeak()">Tune to peak</button></div>
 </section>
 
 <section class="card">
@@ -1142,8 +1143,12 @@ function drawSpectrum(points){
  let bw=plotW/points.length;
  for(let i=0;i<points.length;i++){let v=Math.max(min,Math.min(max,points[i].rssi)),bh=(v-min)/(max-min)*plotH;g.fillStyle='#6aa8ff';g.fillRect(pad+i*bw,h-22-bh,Math.max(1,bw),bh)}
  let every=Math.max(1,Math.ceil(points.length/8));g.fillStyle='#aab0b7';for(let i=0;i<points.length;i+=every)g.fillText((points[i].hz/1e6).toFixed(3),pad+i*bw,h-5);
- let peaks=[...points].sort((a,b)=>b.rssi-a.rssi).slice(0,8);$('peaks').textContent='Strongest: '+peaks.map(p=>(p.hz/1e6).toFixed(6)+' MHz '+p.rssi+' dBm').join('   |   ')
+ let peaks=[...points].sort((a,b)=>b.rssi-a.rssi).slice(0,8);$('peaks').textContent='Strongest: '+peaks.map(p=>(p.hz/1e6).toFixed(6)+' MHz '+p.rssi+' dBm').join('   |   ');
+ if(peaks.length){window._peakHz=peaks[0].hz;let tgt=Math.round(num('target',318)*1e6),off=(peaks[0].hz-tgt)/1e3;
+  $('peakinfo').textContent='Peak '+(peaks[0].hz/1e6).toFixed(6)+' MHz ('+(off>=0?'+':'')+off.toFixed(1)+' kHz vs target)';
+  $('tunepeak').style.display='';}
 }
+async function tunePeak(){if(!window._peakHz)return;$('target').value=(window._peakHz/1e6).toFixed(6);saveUiSettings();await tune()}
 
 function drawPulseHistogram(x){
  let {g,w,h}=baseCanvas('pulses');if(!x.counts.length)return;
