@@ -74,12 +74,11 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 
 ## Known issues / risks
 
-- **Wi-Fi credentials are still in git history.** They no longer live in
-  `src/main.cpp` (moved to git-ignored `secrets.ini` via `CFG_WIFI_*` build
-  defines), and the SoftAP password was rotated. But every commit up to and
-  including `be0b666` still contains the old station SSID/password and the old
-  SoftAP password `<redacted>` — rotate the actual router/AP passwords and scrub
-  history before sharing this repo.
+- **Wi-Fi credentials** now live only in git-ignored `secrets.ini` (via
+  `CFG_WIFI_*` build defines). The early commits that had them inline in
+  `src/main.cpp` were squashed away and the reflog expired + `gc`d on
+  2026-09-01, so no commit carries a real credential. The station password
+  was exposed locally before that and should still be rotated on the router.
 - Everything lives in one file (~2000 lines); no module split yet.
 - `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when `main.cpp`
   itself recompiles (not on a docs-only or dep change).

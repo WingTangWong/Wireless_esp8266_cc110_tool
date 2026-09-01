@@ -28,13 +28,14 @@ each section. Check items off as they land; move notes to `PROGRESS.md`.
       committed as the template. Source keeps `#ifndef` placeholder fallbacks so
       it still builds with no `secrets.ini` (SoftAP-only).
 - [x] Add `secrets.ini` / `*.local.ini` to `.gitignore`.
-- [x] Rotate the SoftAP password (was `<redacted>`, a committed constant) — new
-      value lives only in `secrets.ini`.
-- [ ] **Rotate the actual station Wi-Fi password on the router** — the old one
-      (`<redacted>` / `<redacted>`) is still readable in git history; moving it
-      out of `HEAD` does not un-leak it.
-- [ ] Scrub git history of the old credentials (`git filter-repo` / BFG on the
-      strings) if this repo will ever be published. Rewrites all commit hashes.
+- [x] Rotate the SoftAP password (was a committed constant) — new value lives
+      only in `secrets.ini`.
+- [x] Scrub git history — the early commits that carried the station SSID/pass
+      and old SoftAP pass in `src/main.cpp` were squashed into the "Initial
+      import" commit (2026-09-01), then reflog-expired + `gc`d. No commit in
+      the repo contains real credentials any more.
+- [ ] **Still rotate the actual station Wi-Fi password on the router** — it was
+      exposed locally before the scrub; treat it as compromised.
 - [ ] Consider a first-boot captive portal (WiFiManager) so a fresh unit needs
       no `secrets.ini` at all — the reusable end state. Bigger change; separate
       from this pass.
