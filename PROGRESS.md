@@ -25,7 +25,8 @@ flash.
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), plus fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` gains a `summary`. Builds; not yet hit on hardware. |
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
-| CI | ✅ | `.github/workflows/ci.yml`: `pio run` (d1_mini, no secrets), `pio test -e native`, `compileall`, `pytest` (device tests skip). Not yet run on GitHub — no remote configured. |
+| CI | ✅ | `.github/workflows/ci.yml`: `pio run -e d1_mini` (no secrets), `pio test -e native`, `ruff check .`, `pytest`. Not yet run on GitHub — no remote configured. |
+| Serial-trace build | ✅ | `[env:d1_mini_debug]` = d1_mini + `-DCC1101_TRACE`; `DBG()` no-op otherwise. Both envs build. |
 | Pure DSP module + native unit tests | ✅ | `src/decode.{h,cpp}` — clustering, encoding classifier, candidate-bit extraction, Linear/MegaCode recognizers, histogram. `test/test_decode/` — 16 Unity tests (`pio test -e native`). `main.cpp` is JSON glue over it. d1_mini builds (Flash 39.4%, RAM 64.6%). |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/histogram/pulses/decode/samples/gate/fire/`sample …`/watch/raw; `--json`, `--timeout`. |
 | `tests/` pytest suite | ✅ | 13 pure tests (rfdecode + rfprobe-CLI via in-process fake device, always run) + 15 device tests (auto-skip without `CC1101_HOST`). Not yet run against real hardware. |

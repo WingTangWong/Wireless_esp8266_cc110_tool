@@ -60,9 +60,10 @@ PlatformIO injects these as `CFG_WIFI_*` defines (`platformio.ini` →
 up (the station join just fails).
 
 ```bash
-pio run                 # build
-pio run -t upload       # flash over USB
-pio device monitor      # serial (optional; no debug output by default)
+pio run -e d1_mini            # build (default)
+pio run -e d1_mini -t upload  # flash over USB
+pio run -e d1_mini_debug -t upload   # same firmware + serial tracing
+pio device monitor -b 115200  # watch traces (d1_mini_debug only)
 ```
 
 ### Uploading to the D1 Mini
