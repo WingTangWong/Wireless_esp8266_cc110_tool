@@ -32,7 +32,7 @@ flash.
 | `/api/capture/pulses` + `tools/rfdecode.py` | ✅ | Raw pulse list endpoint (chunk-streamed) and a pure-Python port of the clustering/encoding classifier; a device test cross-checks the two. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
-| Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | Implemented + builds; AP `cc1101-setup` at `192.168.4.1`, WPA2, re-asserted in `serviceWifi()`. Not yet checked on hardware. |
+| Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | Implemented + builds; AP `<ap_ssid>-<chipId>` at `192.168.4.1`, WPA2, DNS captive portal + `onNotFound` redirect for AP clients, re-asserted in `serviceWifi()`. Not yet checked on hardware. |
 | mDNS (`cc1101.local`) | ✅ | Started once Wi-Fi is up |
 | Web UI (single PROGMEM page) | ✅ | Self-contained, `localStorage`-backed settings; info line (fw/CC1101/FS), Self-test button, authorized-use footer |
 | `/api/status` polling | ✅ | UI polls every 900 ms |

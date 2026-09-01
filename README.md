@@ -104,7 +104,12 @@ own access point *and* keeps trying to join your home network.
 |------|-----|
 | Via your network (mDNS) | `http://cc1101.local/` |
 | Via your network (DHCP) | address shown by your router / on `/api/status` |
-| Direct — join the SoftAP (`ap_ssid`) from a phone | `http://192.168.4.1/` |
+| Direct — join the SoftAP from a phone | `http://192.168.4.1/` (or just wait for the captive-portal prompt) |
+
+The SoftAP SSID is `<ap_ssid>-<chip-id>` (e.g. `cc1101-setup-a1b2c3`) so nearby
+units don't collide; the exact name is on `/api/status` (`apSsid`) and in the
+dashboard status row. A DNS catch-all + redirect on the AP makes the phone's
+"sign in to network" sheet open the dashboard automatically.
 
 The same web server answers on both interfaces. The SoftAP stays up even when
 the home network is out of range, so the dashboard is always reachable.
