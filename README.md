@@ -254,6 +254,37 @@ A separate, deliberately minimal operator surface for actuating two gates.
 > SoftAP) can actuate the gates while it is enabled. The enable toggle and a
 > future PIN are tracked in `TASKS.md`.
 
+## Wi-Fi remote (second D1 Mini)
+
+A second board runs `src/remote/` (env `d1_mini_remote`) as a paired remote:
+
+| Wiring | |
+|--------|--|
+| SSD1306 128×64 OLED | I²C — SDA→D2/GPIO4, SCL→D1/GPIO5, addr `0x3C` |
+| Button A (inner gate) | D5/GPIO14 → GND (`INPUT_PULLUP`) |
+| Button B (outer gate) | D6/GPIO12 → GND |
+| Status LED | onboard D4/GPIO2 |
+
+On boot it scans for the strongest SSID starting with `<ap_ssid>-`, joins it
+with `ap_pass` (both from the same `secrets.ini` that built the main firmware —
+**paired by default**), then polls `http://192.168.4.1/api/status` and
+`/api/gate` every ~1.5 s. The OLED shows target frequency, radio/mode, link
+RSSI, heap, and each gate's assigned sample + ready flag. A button press does
+`POST /api/gate/fire?which=inner|outer` and shows the result. Build with
+`-DREMOTE_HEADLESS` (env `d1_mini_remote_headless`) for serial+LED only.
+
+The remote also serves a tiny HTTP surface **on its own IP** (on the main
+unit's SoftAP subnet):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/remote/status` | role, `linkUp`, `joinedSsid`, `mainReachable`, `lastPollAgeMs`, and a cached copy of the main unit's status |
+| `POST /api/remote/press?which=inner\|outer` | fire the gate via the main unit and return `{ok, via:"remote", main:{…}}` — the remote-trigger healthcheck |
+| `GET /` | one-page status + Inner/Outer buttons |
+
+Pin the right firmware to the right board with `ports.ini` (see the two-board
+section above).
+
 ## How it works
 
 ### Capture

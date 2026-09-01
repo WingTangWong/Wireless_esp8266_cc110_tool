@@ -22,10 +22,14 @@ Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅,
 firmware - there is no host/`native` PlatformIO env; the decode logic is
 verified by the Python port instead.
 
-**In progress:** a second D1 Mini as a paired Wi-Fi remote (OLED + 2 buttons).
-The `d1_mini_remote` env + `src/remote/` scaffold build; the actual client
-firmware (Wi-Fi pairing, HTTP polling, display, buttons, health endpoints)
-and its `tests/test_remote.py` are next. See TASKS "Wi-Fi remote".
+**Wi-Fi remote (second D1 Mini):** `src/remote/` firmware is functional and
+**verified on hardware** — flashed to the second board, it auto-joined the main
+unit's SoftAP (`cc1101-setup-d0867b`, paired via the shared `ap_pass`), polled
+`/api/status` + `/api/gate`, and parsed them correctly (`mode=idle radio=1`,
+RSSI -31). Buttons + `/api/remote/press` fire the gate via the main unit; a
+`/api/remote/status` endpoint exposes the cached view. Still to verify: the OLED
+rendering and a physical button press (display not yet wired). `tests/` for the
+remote-trigger healthcheck are next. See TASKS "Wi-Fi remote".
 
 Hardware: firmware `0b136ca` flashed to a D1 Mini (MAC 5c:cf:7f:d0:86:7b) on
 2026-08-31 and **the full `tests/` device suite passes (31/31, no skips)** against

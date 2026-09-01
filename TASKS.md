@@ -46,22 +46,22 @@ fires.
 
 ### Remote firmware (`src/remote/`)
 
-- [ ] Pairing: `WiFi.scanNetworks()` → join the strongest SSID starting with
-      `<ap_ssid>-` using `ap_pass`; reach the main unit at `192.168.4.1`.
-      Optional `[remote] target_ssid` in `secrets.ini` to pin one unit.
-- [ ] Poll loop: `GET /api/status` + `GET /api/gate` every ~1.5 s; show radio
-      state, mode, target MHz, Wi-Fi RSSI, heap, and each gate's assigned
-      sample + ready flag on the OLED. Connection-lost screen + retry.
-- [ ] Buttons: debounced; A → `POST /api/gate/fire?which=inner`, B → `outer`;
-      show "firing… / sent / error" + LED blink. Guard while the main unit is
-      busy.
-- [ ] Headless build (`-DREMOTE_HEADLESS`): status over serial + LED only, no
-      OLED dependency needed at runtime.
-- [ ] Minimal HTTP server on the remote for health/debug:
-      `GET /api/remote/status` (role, main reachable, RSSI, last poll, cached
-      main status) and `POST /api/remote/press?button=inner|outer` (simulate a
-      press — drives the same fire path).
-- [ ] Report `firmwareVersion` + `role:"remote"`; reuse `scripts/version.py`.
+- [x] Pairing: `WiFi.scanNetworks()` → join the strongest SSID starting with
+      `<ap_ssid>-` using `ap_pass`; `CFG_REMOTE_TARGET_SSID` pins one unit.
+      **Verified on hardware** — remote auto-joined `cc1101-setup-d0867b`.
+- [x] Poll loop: `GET /api/status` + `GET /api/gate` every ~1.5 s with a tiny
+      no-alloc JSON extractor; OLED shows freq / radio / mode / RSSI / heap /
+      gate samples; connection-lost + retry. **Verified** (`main.valid=1
+      reachable=1 mode=idle radio=1`).
+- [x] Buttons: debounced (30 ms); A → fire inner, B → fire outer; toast
+      "firing / sent / error" + LED; guarded while `main.busy`.
+- [x] `d1_mini_remote_headless` env (`-DREMOTE_HEADLESS`) — serial + LED only.
+- [x] Remote HTTP server: `GET /api/remote/status`,
+      `POST /api/remote/press?which=inner|outer` (fires via the main unit,
+      returns the wrapped response), `GET /`.
+- [x] Reports `firmwareVersion` + `role:"remote"`; reuses `scripts/version.py`.
+- [ ] Verify the OLED rendering + a physical button press once the display is
+      wired (built + boots without a display attached).
 
 ### Healthcheck / tests
 
