@@ -69,6 +69,45 @@ def classify_encoding(all_c: Clusters, high_c: Clusters, low_c: Clusters) -> str
     return "unknown / mixed timing"
 
 
+def near(value, target, tol):
+    return abs(value - target) <= tol
+
+
+def try_ev1527(pulses, te_hint):
+    """Port of rfd::tryEV1527 - returns dict or None."""
+    te_hint = max(50, min(1200, te_hint))
+    sync_min, sync_max = te_hint * 8, te_hint * 80
+    n = len(pulses)
+    for start in range(n - 1):
+        d, lv = pulses[start]
+        if lv != 0 or not (sync_min <= d <= sync_max):
+            continue
+        te = d // 31
+        if not (40 <= te <= 1500):
+            continue
+        t_short, t_long = te, te * 3
+        tol_short, tol_long = (te * 3) // 4, te * 2
+        data, bits, i, bad = 0, 0, start + 1, False
+        while bits < 24 and i + 1 < n:
+            (h, hl), (low, ll) = pulses[i], pulses[i + 1]
+            if hl != 1 or ll != 0:
+                bad = True
+                break
+            if near(h, t_short, tol_short) and near(low, t_long, tol_long):
+                data = (data << 1)
+            elif near(h, t_long, tol_long) and near(low, t_short, tol_short):
+                data = (data << 1) | 1
+            else:
+                bad = True
+                break
+            bits += 1
+            i += 2
+        if not bad and bits == 24:
+            return {"name": "EV1527 / PT2262 24-bit", "data": data,
+                    "address": (data >> 4) & 0xFFFFF, "button": data & 0xF, "te_us": te}
+    return None
+
+
 def analyze(pulses):
     """Return the fields the firmware puts on /api/decode/current that this
     port covers: encoding, short_us, long_us, ratio."""

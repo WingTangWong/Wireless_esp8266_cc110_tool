@@ -108,8 +108,9 @@ against a mock device — 14 tests). Hardware run still pending.
       `kmeans2*` and the encoding classifier, unit-tested on synthetic pulse
       trains, and cross-checked against the device in
       `test_decode_matches_python_port` (via the new `/api/capture/pulses`).
-  - [ ] Port the bit-extraction and the Linear / MegaCode recognizers too, so
-        the cross-check covers `protocol_candidate` / `protocol_bits`.
+  - [ ] Port the bit-extraction and the Linear / MegaCode recognizers to
+        `rfdecode.py` too (EV1527 is ported), so the device cross-check can
+        cover `protocol_candidate` / `protocol_bits`.
 - [x] `rfprobe.py`: `sample {list,save,load,decode,delete,play}` subcommands,
       global `--timeout`, `watch` mode. `tests/test_rfprobe_cli.py` +
       `tests/_fakedevice.py` exercise the CLI in-process (7 tests, always run).
@@ -196,8 +197,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
       as JSON; this is about the saved files and round-tripping.)
 - [ ] Export capture as a Flipper `.sub` file. (Raw µs list: done via
       `/api/capture/pulses`.)
-- [ ] Add more protocol recognizers (Princeton PT2262/EV1527, Hs2303, Nice
-      FLO, CAME) — the generic candidate-bits output is the starting point.
+- [x] EV1527 / PT2262 24-bit recognizer (`rfd::tryEV1527`, self-calibrating Te
+      from the sync gap; 3 Unity tests + a Python port in `rfdecode.py`).
+- [ ] More recognizers: Hs2303, Nice FLO, CAME, Holtek HT6P20 — same pattern
+      (add to `decode.cpp`, Unity-test, wire into the `specific` chain).
 - [ ] Optional rolling-code detection / warning (KeeLoq-style) so the user
       knows a fixed replay will not work.
 - [ ] Per-sample notes / rename in the UI.

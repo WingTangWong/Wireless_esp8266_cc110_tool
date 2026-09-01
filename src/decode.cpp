@@ -295,6 +295,71 @@ ProtocolDecode tryMegaCode(const PulseSpan& p, const MegaParams& mp) {
   return out;
 }
 
+ProtocolDecode tryEV1527(const PulseSpan& p, uint32_t teHintUs) {
+  ProtocolDecode out;
+  if (teHintUs < 50) teHintUs = 50;
+  if (teHintUs > 1200) teHintUs = 1200;
+
+  // Plausible sync-gap window, loosely bounded by the caller's Te hint.
+  const uint32_t syncMin = teHintUs * 8;
+  const uint32_t syncMax = teHintUs * 80;
+
+  for (uint16_t start = 0; start + 1 < p.n; ++start) {
+    // sync = a long LOW gap; Te is derived from it (EV1527 sync ~= 31*Te).
+    if (p.lvl[start] != 0) continue;
+    const uint32_t gap = p.dur[start];
+    if (gap < syncMin || gap > syncMax) continue;
+
+    uint32_t te = gap / 31;
+    if (te < 40 || te > 1500) continue;
+
+    const uint32_t tShort = te;
+    const uint32_t tLong = te * 3;
+    const uint32_t tolShort = (te * 3) / 4;   // OOK timing is noisy
+    const uint32_t tolLong = te * 2;
+
+    uint32_t data = 0;
+    uint8_t bitCount = 0;
+    uint16_t i = start + 1;
+    bool bad = false;
+
+    while (bitCount < 24 && i + 1 < p.n) {
+      if (p.lvl[i] != 1 || p.lvl[i + 1] != 0) { bad = true; break; }
+      const uint32_t h = p.dur[i];
+      const uint32_t l = p.dur[i + 1];
+
+      if (nearDuration(h, tShort, tolShort) && nearDuration(l, tLong, tolLong)) {
+        data = (data << 1) | 0;
+      } else if (nearDuration(h, tLong, tolLong) && nearDuration(l, tShort, tolShort)) {
+        data = (data << 1) | 1;
+      } else {
+        bad = true;
+        break;
+      }
+      ++bitCount;
+      i += 2;
+    }
+
+    if (!bad && bitCount == 24) {
+      const uint32_t teUs = te;
+      out.matched = true;
+      strcpy(out.name, "EV1527 / PT2262 24-bit");
+      out.data = data;
+      for (int b = 23; b >= 0; --b) {
+        const size_t k = 23 - (size_t)b;
+        out.bits[k] = ((data >> b) & 1) ? '1' : '0';
+      }
+      const uint32_t address = (data >> 4) & 0xFFFFF;   // 20-bit code
+      const uint32_t button = data & 0x0F;              // 4-bit data/button
+      snprintf(out.details, sizeof(out.details),
+               "Te~%luus, address=0x%05lX, button=0x%lX",
+               (unsigned long)teUs, (unsigned long)address, (unsigned long)button);
+      return out;
+    }
+  }
+  return out;
+}
+
 uint32_t histogram(const PulseSpan& p, uint8_t bins,
                    uint16_t* counts, uint16_t* highs, uint16_t* lows) {
   for (uint8_t i = 0; i < bins; ++i) { counts[i] = 0; highs[i] = 0; lows[i] = 0; }

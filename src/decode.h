@@ -77,6 +77,11 @@ BitExtraction candidateBits(const PulseSpan& p, const Clusters& all,
 ProtocolDecode tryLinear(const PulseSpan& p);
 ProtocolDecode tryMegaCode(const PulseSpan& p, const MegaParams& mp);
 
+// EV1527 / PT2262-style 24-bit OOK: a ~31*Te sync gap, then 24 bits where
+// 0 = short HIGH / long LOW and 1 = long HIGH / short LOW (ratio ~1:3).
+// teUs is the base symbol time; pass the short-pulse cluster width.
+ProtocolDecode tryEV1527(const PulseSpan& p, uint32_t teUs);
+
 // Pulse-width histogram bins (matches pulseHistogramJson). counts/highs/lows
 // must have room for `bins` entries. Returns the bin width in microseconds.
 uint32_t histogram(const PulseSpan& p, uint8_t bins,

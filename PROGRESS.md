@@ -40,8 +40,9 @@ flash.
 | Raw OOK capture (GDO2 ISR) | ✅ | Edge-timed, glitch filter, 3072-pulse buffer |
 | Pulse-width histogram | ✅ | 28 bins, high/low split |
 | Generic timing analysis | ✅ | 2-means clustering, encoding-family guess, candidate bits |
-| Linear 10-bit recognizer | ⚠️ | Implemented; not yet validated against a real remote |
-| MegaCode 24-bit recognizer | ⚠️ | Implemented; not yet confirmed decoding a live 318 MHz MegaCode remote |
+| Linear 10-bit recognizer | ⚠️ | Implemented + Unity-tested; not yet validated against a real remote |
+| MegaCode 24-bit recognizer | ⚠️ | Implemented + Unity-tested (synthetic frame); not yet confirmed on a live remote |
+| EV1527 / PT2262 recognizer | ⚠️ | Implemented + Unity-tested + Python port; self-calibrates Te from the sync gap; not yet validated on a live remote |
 | Save / load / list / delete samples (LittleFS) | ✅ | `rf315_<name>.bin`, `"315R"` format v1 |
 | Timer1 raw replay | ⚠️ | Implemented; end-to-end "captured remote actuates the door" not yet verified |
 | Gate control pages (`/gate`, `/gate/config`) | ⚠️ | Implemented + builds. Two-button operator page + assignment page; assignments persist to `/gate.bin` (`"GATE"` v1). POSTs are same-origin checked. Not yet exercised on hardware. |
