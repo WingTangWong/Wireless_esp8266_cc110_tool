@@ -10,14 +10,14 @@ every test in tests/test_device.py is skipped.
 """
 
 import os
-import sys
 import pathlib
+import sys
 
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
-import rfprobe  # noqa: E402
+import rfprobe
 
 HOST = os.environ.get("CC1101_HOST")
 

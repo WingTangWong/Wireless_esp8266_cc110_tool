@@ -47,8 +47,8 @@ jobs:
 
       - run: pip install -r requirements-dev.txt
 
-      - name: Compile-check tools + tests
-        run: python -m compileall -q tools tests scripts
+      - name: Lint (ruff)
+        run: ruff check .
 
       - name: pytest (device tests auto-skip without CC1101_HOST)
         run: pytest -q

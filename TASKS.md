@@ -100,7 +100,8 @@ against a mock device — 14 tests). Hardware run still pending.
       exercising the placeholder path), `compileall` on `tools/`+`tests/`+
       `scripts/`, and `pytest` (device tests skip). PlatformIO/pip cached.
   - [x] Add `pio test -e native` to CI.
-  - [ ] Add a lint step (`ruff`) once a config is agreed.
+  - [x] `ruff` lint step — `ruff.toml` (E/F/I/UP/RUF, len 110), `ruff check .`
+        in CI, `ruff>=0.6` in `requirements-dev.txt`. Tree is clean.
 - [x] **Surface the new status fields in the dashboard** — an info line shows
       fw version/build, CC1101 version, LittleFS used/total; a "Self-test"
       button calls `/api/selftest` and shows PASS / failed-check names.

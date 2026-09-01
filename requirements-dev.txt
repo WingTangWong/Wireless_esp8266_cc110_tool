@@ -1,2 +1,3 @@
 # Host-side test/tooling deps. tools/rfprobe.py itself needs only the stdlib.
 pytest>=7
+ruff>=0.6

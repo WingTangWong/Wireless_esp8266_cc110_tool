@@ -1,7 +1,6 @@
 """On-device HTTP API checks. Auto-skipped unless CC1101_HOST points at a
 reachable, flashed module. See conftest.py."""
 
-import time
 
 import pytest
 
@@ -135,8 +134,8 @@ def test_samples_list_schema(api):
 def test_decode_matches_python_port(api, host):
     """Cross-check the firmware's clustering/encoding against tools/rfdecode.py
     over the same raw pulses. Skips if the current capture is too small."""
-    import rfprobe
     import rfdecode
+    import rfprobe
 
     api("/api/capture/start", {"ms": 1500})
     rfprobe._wait_idle(host, 12.0)

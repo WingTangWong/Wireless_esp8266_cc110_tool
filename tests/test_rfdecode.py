@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
-import rfdecode  # noqa: E402
+import rfdecode
 
 
 def _ppm(bits, short=500, long=1500, gap=6000):

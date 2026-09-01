@@ -90,6 +90,7 @@ python -m pip install -r requirements-dev.txt
 CC1101_HOST=cc1101.local pytest        # skips entirely with no device
 
 pio test -e native                     # host unit tests for src/decode.cpp
+ruff check .                            # lint tools/ tests/ scripts/
 ```
 
 See `tests/README.md`.

@@ -1,0 +1,11 @@
+# Host-side Python: tools/, tests/, scripts/. The firmware is C++.
+line-length = 110
+target-version = "py38"
+
+[lint]
+select = ["E", "F", "I", "UP", "RUF"]
+
+[lint.per-file-ignores]
+# conftest / test helpers manipulate sys.path before importing local modules.
+"tests/**" = ["E402"]
+"tools/rfprobe.py" = ["E402"]

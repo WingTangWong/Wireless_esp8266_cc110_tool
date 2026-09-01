@@ -240,7 +240,7 @@ def cmd_watch(args):
                 x = call(args.host, "/api/status", timeout=args.timeout)
                 print(
                     f"{time.strftime('%H:%M:%S')}  mode={x.get('mode'):<10} "
-                    f"busy={str(x.get('busy')):<5} heap={x.get('heap')} "
+                    f"busy={x.get('busy')!s:<5} heap={x.get('heap')} "
                     f"pulses={x.get('pulses')} sweep={x.get('sweepCount')} "
                     f"{x.get('frequencyHz', 0) / 1e6:.4f}MHz "
                     f"wifi={'up' if x.get('wifiConnected') else 'down'} "

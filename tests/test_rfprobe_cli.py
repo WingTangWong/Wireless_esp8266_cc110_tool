@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
-import rfprobe  # noqa: E402
-from _fakedevice import FakeDevice  # noqa: E402
+import rfprobe
+from _fakedevice import FakeDevice
 
 
 @pytest.fixture

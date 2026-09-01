@@ -6,7 +6,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 
 class _State:
@@ -157,7 +157,7 @@ class FakeDevice:
     def __init__(self):
         self.state = _State()
         self._srv = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self.state))
-        self.host = "127.0.0.1:%d" % self._srv.server_address[1]
+        self.host = f"127.0.0.1:{self._srv.server_address[1]}"
 
     def __enter__(self):
         threading.Thread(target=self._srv.serve_forever, daemon=True).start()
