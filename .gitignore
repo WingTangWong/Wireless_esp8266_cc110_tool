@@ -1,5 +1,6 @@
 .pio
 secrets.ini
+ports.ini
 *.local.ini
 __pycache__/
 .pytest_cache/

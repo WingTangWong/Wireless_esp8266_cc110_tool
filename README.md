@@ -52,10 +52,26 @@ Power the CC1101 from 3V3 only — its I/O is **not** 5 V tolerant. A quarter-wa
 whip for the target band (~24 cm at 318 MHz, or a tuned helical) on the module's
 ANT pad markedly improves both capture and replay range.
 
+## Two-board setup
+
+| Board | PlatformIO env | Role |
+|-------|----------------|------|
+| D1 Mini + CC1101 | `d1_mini` (`d1_mini_debug` adds serial trace) | the tool: sweep / capture / replay / dashboard / HTTP API |
+| D1 Mini + SSD1306 OLED + 2 buttons | `d1_mini_remote` | Wi-Fi remote: shows the tool's status, fires the gates |
+
+The remote joins the main unit's SoftAP (`cc1101-setup-<chipId>`) using the same
+`ap_pass` from `secrets.ini`, so the two are **paired by default** once both are
+flashed from the same checkout. See "Wi-Fi remote" below (WIP).
+
+Right firmware → right board: when both are plugged in, `pio` autodetect can
+pick the wrong one. Copy `ports.ini.example` → `ports.ini` (git-ignored) and pin
+each env's `upload_port` to a `/dev/serial/by-path/…` path — find them with
+`pio device list` (the `LOCATION`) and `ls -l /dev/serial/by-path/`.
+
 ## Software
 
 - **PlatformIO** with the Arduino framework (`platformio.ini`, board `d1_mini`).
-- Library: `lsatan/SmartRC-CC1101-Driver-Lib @ ^3.0.2`.
+- Main unit: `lsatan/SmartRC-CC1101-Driver-Lib`; remote: ThingPulse SSD1306.
 - On-device storage: LittleFS (holds saved raw samples as `rf315_<name>.bin`).
 - Web server: `ESP8266WebServer` on port 80, plus mDNS.
 
@@ -272,9 +288,11 @@ frequencyHz, pulseCount, durationUs) followed by `pulseCount` × 5-byte
 ## Repository layout
 
 ```
-platformio.ini        PlatformIO project, library deps, [wifi] placeholders
+platformio.ini        PlatformIO project: d1_mini / d1_mini_debug / d1_mini_remote
 scripts/version.py    pre-build: injects `git describe` as the firmware version
 secrets.ini.example   Wi-Fi credential template -> copy to secrets.ini (git-ignored)
+ports.ini.example     per-env upload_port pinning -> copy to ports.ini (git-ignored)
+src/remote/           the Wi-Fi remote firmware (d1_mini_remote env)
 src/main.cpp           Firmware: hardware, Wi-Fi, web UI, HTTP API, JSON glue
 src/decode.{h,cpp}     Pure pulse-timing kernels (clustering, recognizers, histogram)
 src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset

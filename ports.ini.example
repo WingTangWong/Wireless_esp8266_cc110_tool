@@ -1,0 +1,28 @@
+; Copy to ports.ini (git-ignored) to pin each PlatformIO env to a specific
+; board, so `pio run -e <env> -t upload` never flashes the wrong D1 Mini when
+; both are plugged in.
+;
+;   cp ports.ini.example ports.ini
+;
+; Find your ports:
+;   pio device list                       # note the LOCATION of each board
+;   ls -l /dev/serial/by-path/            # stable per physical USB port
+;
+; Prefer a /dev/serial/by-path/... path over /dev/ttyUSBn - the CH340 chips on
+; these boards have no serial number, so /dev/ttyUSB0 vs USB1 can swap on
+; replug, but a by-path entry stays put as long as each board stays in the same
+; physical USB socket.
+;
+; If ports.ini is absent, PlatformIO autodetects (fine with one board attached).
+
+[env:d1_mini]
+upload_port = /dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.4:1.0-port0
+monitor_port = ${env:d1_mini.upload_port}
+
+[env:d1_mini_debug]
+upload_port = ${env:d1_mini.upload_port}
+monitor_port = ${env:d1_mini.upload_port}
+
+[env:d1_mini_remote]
+upload_port = /dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-port0
+monitor_port = ${env:d1_mini_remote.upload_port}

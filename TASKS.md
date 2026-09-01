@@ -20,6 +20,66 @@ each section. Check items off as they land; move notes to `PROGRESS.md`.
   relevant hardware checklist item in `PROGRESS.md` is ticked.
 - Delete the branch after merge.
 
+## Wi-Fi remote (second D1 Mini)
+
+A second WeMOS D1 Mini (no CC1101) acts as a paired **remote control + display**
+for the main unit: SSD1306 128x64 I2C OLED, two momentary buttons (inner /
+outer gate), onboard LED. It joins the main unit's SoftAP
+(`cc1101-setup-<chipId>`) using the same rotated `ap_pass` from `secrets.ini`
+(so they are paired by default), polls the HTTP API for status, and POSTs gate
+fires.
+
+### Build / device targeting
+
+- [x] `[env:d1_mini_remote]` in `platformio.ini` — same board,
+      `build_src_filter = -<*> +<remote/>`, ThingPulse SSD1306 dep,
+      `-DCFG_WIFI_AP_*` from `secrets.ini` for pairing. (Flash 25%, RAM 34%.)
+- [x] `build_src_filter = +<*> -<remote/>` on `[env:d1_mini]` /
+      `[env:d1_mini_debug]` so the main build ignores `src/remote/`.
+- [x] `ports.ini` (git-ignored, `extra_configs`) pins `upload_port` per env to a
+      stable `/dev/serial/by-path/...` path; `ports.ini.example` +
+      "how to find your ports" note. Autodetect when absent.
+- [x] All three envs build (locally + CI step added).
+- [ ] Runtime role guard — remote firmware prints `role=remote` on boot (done in
+      scaffold); still want the main firmware to flag a missing CC1101 louder
+      than `radio:false`.
+
+### Remote firmware (`src/remote/`)
+
+- [ ] Pairing: `WiFi.scanNetworks()` → join the strongest SSID starting with
+      `<ap_ssid>-` using `ap_pass`; reach the main unit at `192.168.4.1`.
+      Optional `[remote] target_ssid` in `secrets.ini` to pin one unit.
+- [ ] Poll loop: `GET /api/status` + `GET /api/gate` every ~1.5 s; show radio
+      state, mode, target MHz, Wi-Fi RSSI, heap, and each gate's assigned
+      sample + ready flag on the OLED. Connection-lost screen + retry.
+- [ ] Buttons: debounced; A → `POST /api/gate/fire?which=inner`, B → `outer`;
+      show "firing… / sent / error" + LED blink. Guard while the main unit is
+      busy.
+- [ ] Headless build (`-DREMOTE_HEADLESS`): status over serial + LED only, no
+      OLED dependency needed at runtime.
+- [ ] Minimal HTTP server on the remote for health/debug:
+      `GET /api/remote/status` (role, main reachable, RSSI, last poll, cached
+      main status) and `POST /api/remote/press?button=inner|outer` (simulate a
+      press — drives the same fire path).
+- [ ] Report `firmwareVersion` + `role:"remote"`; reuse `scripts/version.py`.
+
+### Healthcheck / tests
+
+- [ ] `tests/test_remote.py` — skips unless `CC1101_REMOTE_HOST` is set and the
+      remote answers `/api/remote/status`. Checks: role, `mainReachable`,
+      cached main status shape.
+- [ ] End-to-end: with both `CC1101_HOST` and `CC1101_REMOTE_HOST` set,
+      `POST` the remote's `/api/remote/press?button=inner` and confirm the main
+      unit registered the fire (mode transition / `lastFireError`) — the
+      "remote trigger/activation" local build healthcheck.
+- [ ] `tests/README.md` + `requirements-dev.txt` + CI updated.
+
+### Later
+
+- [ ] OLED menu (sweep / capture / tune-to-peak) beyond the two gate buttons.
+- [ ] Remote shows the last decode result / candidate protocol.
+- [ ] Battery / sleep considerations if the remote runs untethered.
+
 ## P0 – Security / hygiene
 
 - [x] Move `WIFI_SSID` / `WIFI_PASS` (and the SoftAP SSID/pass) out of

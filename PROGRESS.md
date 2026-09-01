@@ -17,9 +17,15 @@ Host side: `tools/rfprobe.py` CLI (incl. `export` to Flipper `.sub`),
 `tools/rfdecode.py` - a full Python port of the decode kernels with its own
 unit tests - a pytest suite (pure + device), `ruff`, and GitHub Actions CI.
 
-Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅. This is MCU
+Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅,
+`d1_mini_remote` ✅ (Flash ~26%, RAM ~35% — scaffold only). This is MCU
 firmware - there is no host/`native` PlatformIO env; the decode logic is
 verified by the Python port instead.
+
+**In progress:** a second D1 Mini as a paired Wi-Fi remote (OLED + 2 buttons).
+The `d1_mini_remote` env + `src/remote/` scaffold build; the actual client
+firmware (Wi-Fi pairing, HTTP polling, display, buttons, health endpoints)
+and its `tests/test_remote.py` are next. See TASKS "Wi-Fi remote".
 
 Hardware: firmware `0b136ca` flashed to a D1 Mini (MAC 5c:cf:7f:d0:86:7b) on
 2026-08-31 and **the full `tests/` device suite passes (31/31, no skips)** against

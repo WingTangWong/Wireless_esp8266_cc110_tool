@@ -29,11 +29,14 @@ jobs:
 
       - run: pip install --upgrade platformio
 
-      - name: Build (no secrets.ini -> [wifi] placeholders, SoftAP-only)
+      - name: Build main unit (no secrets.ini -> [wifi] placeholders)
         run: pio run -e d1_mini
 
       - name: Build the serial-trace variant
         run: pio run -e d1_mini_debug
+
+      - name: Build the Wi-Fi remote
+        run: pio run -e d1_mini_remote
 
   host:
     name: Host tooling + tests
