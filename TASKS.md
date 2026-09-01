@@ -166,12 +166,15 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [~] **Security / footgun review** — POST endpoints now reject cross-origin
   requests (`Origin` host vs `Host`). Still **no authentication**: anyone on the
   LAN/SoftAP can fire a gate.
-  - [ ] Follow-up: optional PIN / basic-auth on `/gate*`, or a config flag to
-        disable the operator page entirely.
-  - [ ] Follow-up: report load failures from `fireGate()` back to the caller
-        (currently `/api/gate/fire` answers `ok` before the fire runs).
-  - [ ] Follow-up: "use the sample's captured frequency" one-click default and a
-        visible forced-power notice on `/gate/config` (notice done; default not).
+  - [x] Runtime enable/disable toggle — `gateEnabled` in `gate.bin` (v2),
+        `POST /api/gate/enable?on=0|1`, checkbox on `/gate/config`; `fire`
+        returns 403 when off; the operator page shows the disabled state.
+  - [x] `fireGate()` load failures now set `gateLastFireError`, surfaced on
+        `/api/gate` and shown on the operator page's next poll.
+  - [x] Picking a sample on `/gate/config` auto-fills the frequency from that
+        sample's capture.
+  - [ ] Still open: an actual secret (PIN / basic-auth) on `/gate*` for when the
+        network itself is not trusted.
 
 ### Other P2 items
 

@@ -18,6 +18,7 @@ class _State:
         self.pulses = 0
         self.sweep = []
         self.samples = {"sample01": (318_000_000, 50, 120_000)}
+        self.gate_enabled = True
 
     @property
     def busy(self):
@@ -146,8 +147,13 @@ def _handler(state):
                 empty = {"assigned": False, "sampleName": "", "sampleExists": False,
                          "frequencyHz": 0, "bandwidthKhz": 0, "txPowerDbm": 12,
                          "repeats": 0, "invert": False, "ready": False}
-                return self._json({"ok": True, "txPowerForcedDbm": 12, "minRepeats": 4,
+                return self._json({"ok": True, "enabled": state.gate_enabled,
+                                   "txPowerForcedDbm": 12, "minRepeats": 4,
+                                   "lastFireError": "",
                                    "inner": dict(empty), "outer": dict(empty)})
+            if p == "/api/gate/enable":
+                state.gate_enabled = q.get("on", "1") != "0"
+                return self._json({"ok": True, "enabled": state.gate_enabled})
             return self._json({"ok": False, "error": "not found"}, 404)
 
     return H

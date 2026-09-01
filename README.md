@@ -172,26 +172,31 @@ A separate, deliberately minimal operator surface for actuating two gates.
 |----------|--------|---------|
 | `/gate` | GET | Two-button operator page: **Inner gate** / **Outer gate** |
 | `/gate/config` | GET | Assign a saved sample + radio settings to each button |
-| `/api/gate` | GET | Current assignments, resolved sample state, forced-power/min-repeat values |
+| `/api/gate` | GET | Assignments, resolved sample state, `enabled`, `lastFireError`, forced-power/min-repeat |
 | `/api/gate/assign` | POST | Set a button's `sampleName`, `frequencyHz`, `bandwidthKhz`, `repeats`, `invert` (empty `sampleName` clears it) |
+| `/api/gate/enable?on=0\|1` | POST | Enable / disable the operator page and `fire` |
 | `/api/gate/fire?which=inner\|outer` | POST | Replay that button's assigned sample |
 
 - The POST endpoints reject cross-origin requests (an `Origin` header whose host
   doesn't match `Host`). `/api/gate/fire` returns `409 busy` during any capture,
-  sweep, or playback.
-- Assignments persist to LittleFS as `/gate.bin` (packed `"GATE"` v1 record,
-  one `GateAssignment` per button) and are loaded on boot. A missing file or a
-  since-deleted sample leaves that button unassigned and `fire` returns an error
-  instead of transmitting.
+  sweep, or playback, or `403` when gate control is disabled.
+- Assignments + the enabled flag persist to LittleFS as `/gate.bin` (packed
+  `"GATE"` v2 record, one `GateAssignment` per button; a v1 file is read as
+  "enabled") and are loaded on boot. A missing file or a since-deleted sample
+  leaves that button unassigned; a fire that then fails sets `lastFireError`,
+  which the operator page shows on its next poll.
 - **Every gate fire forces the CC1101 to its maximum output power (+12 dBm),**
   regardless of the stored per-assignment value, because the module has a
   mismatched/stub antenna and marginal RF matching. Repeats are floored at 4.
   After the burst the dashboard's target frequency and RX state are restored.
+- Picking a sample on `/gate/config` auto-fills the frequency from that sample's
+  capture.
 - Served on both the station and SoftAP interfaces, so the gate page works from
   a phone joined to `cc1101-setup` with no other network.
 
-> Anyone who can reach the device (LAN or SoftAP) can actuate the gates. There
-> is no authentication yet — see `TASKS.md`.
+> There is still **no authentication** — anyone who can reach the device (LAN or
+> SoftAP) can actuate the gates while it is enabled. The enable toggle and a
+> future PIN are tracked in `TASKS.md`.
 
 ## How it works
 

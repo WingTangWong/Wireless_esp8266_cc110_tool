@@ -156,6 +156,8 @@ def test_gate_status_schema(api):
     d = api("/api/gate")
     assert d["txPowerForcedDbm"] == 12
     assert d["minRepeats"] >= 1
+    assert isinstance(d["enabled"], bool)
+    assert isinstance(d["lastFireError"], str)
     for which in ("inner", "outer"):
         a = d[which]
         assert set(a) >= {"assigned", "sampleName", "sampleExists", "frequencyHz",
