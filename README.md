@@ -159,7 +159,8 @@ connected client count), and free heap. Sections:
   width, and the MegaCode timing window (pulse, symbol, frame gap, header).
   Stored in the browser's `localStorage` and pushed to the device.
 - **Decode** – JSON result of the generic timing analysis plus any focused
-  protocol match.
+  protocol match, and a rolling-code advisory when a long unmatched code is
+  seen (a replay of a KeeLoq/AES remote won't re-open the device).
 - **Stored samples** – list / load / decode / play / rename / delete saved
   captures. Playback supports 1–10 repeats and logic inversion.
 

@@ -853,6 +853,24 @@ static String decodeCurrentJson() {
     out += ",\"protocol_candidate\":null";
   }
 
+  // Longest uninterrupted 0/1 run in the candidate bits.
+  uint16_t longestRun = 0, run = 0;
+  for(const char* c = be.bits; *c; ++c) {
+    if(*c == '0' || *c == '1') { if(++run > longestRun) longestRun = run; }
+    else run = 0;
+  }
+  out += ",\"candidate_bit_run\":" + String(longestRun);
+
+  String note;
+  if(!specific.matched && longestRun >= 60) {
+    note = "Long code (" + String(longestRun) + " bits), no fixed protocol matched — "
+           "likely a rolling code (KeeLoq / AES). A captured replay will usually NOT "
+           "re-open the device.";
+  } else if(!specific.matched && longestRun >= 40) {
+    note = String(longestRun) + "-bit code, no known fixed protocol matched.";
+  }
+  out += ",\"note\":\"" + jsonEscape(note) + "\"";
+
   out += "}";
   return out;
 }
@@ -1139,14 +1157,14 @@ async function spectrumData(){try{let x=await j('/api/sweep/data');drawSpectrum(
 async function recordStart(){try{saveUiSettings();await pushRuntimeConfig();let hz=Math.round(num('target',318)*1e6),bw=$('bw').value;await j('/api/tune?hz='+hz+'&bw='+bw);lastCaptureSignature='';await j('/api/capture/start?ms='+Math.round(num('recms',2500)))}catch(e){err(e)}}
 async function recordStop(){try{await j('/api/capture/stop');status()}catch(e){err(e)}}
 async function pulseData(){try{let x=await j('/api/capture/histogram');drawPulseHistogram(x);localStorage.setItem(PULSE_STORE,JSON.stringify(x))}catch(e){err(e)}}
-async function decodeCurrent(){try{saveUiSettings();await pushRuntimeConfig();let x=await j('/api/decode/current'),txt=JSON.stringify(x,null,2);$('decode').textContent=txt;localStorage.setItem(DECODE_STORE,txt)}catch(e){err(e)}}
+async function decodeCurrent(){try{saveUiSettings();await pushRuntimeConfig();let x=await j('/api/decode/current'),txt=(x.note?('NOTE: '+x.note+'\n\n'):'')+JSON.stringify(x,null,2);$('decode').textContent=txt;localStorage.setItem(DECODE_STORE,txt)}catch(e){err(e)}}
 async function saveCurrent(){try{saveUiSettings();await j('/api/sample/save?name='+encodeURIComponent($('sampleName').value));listSamples()}catch(e){err(e)}}
 
 async function listSamples(){
  try{let x=await j('/api/samples'),h='';for(let s of x.samples){let n=encodeURIComponent(s.name);h+=`<tr><td>${esc(s.name)}</td><td>${(s.frequencyHz/1e6).toFixed(6)}</td><td>${s.pulseCount}</td><td>${(s.durationUs/1000).toFixed(1)} ms</td><td><button class="tiny" onclick="sampleLoad('${n}')">Load</button> <button class="tiny" onclick="sampleDecode('${n}')">Decode</button> <button class="tiny" onclick="samplePlay('${n}')">Play</button> <button class="tiny" onclick="sampleRename('${n}')">Rename</button> <button class="tiny danger" onclick="sampleDelete('${n}')">Delete</button></td></tr>`}$('samples').innerHTML=h||'<tr><td colspan="5" class="muted">No saved samples.</td></tr>'}catch(e){err(e)}
 }
 async function sampleLoad(n){try{let x=await j('/api/sample/load?name='+n);$('target').value=(x.frequencyHz/1e6).toFixed(6);saveUiSettings();lastCaptureSignature='';await status();await pulseData()}catch(e){err(e)}}
-async function sampleDecode(n){try{await pushRuntimeConfig();let x=await j('/api/sample/decode?name='+n),txt=JSON.stringify(x,null,2);$('decode').textContent=txt;localStorage.setItem(DECODE_STORE,txt);lastCaptureSignature='';await status();await pulseData()}catch(e){err(e)}}
+async function sampleDecode(n){try{await pushRuntimeConfig();let x=await j('/api/sample/decode?name='+n),txt=(x.note?('NOTE: '+x.note+'\n\n'):'')+JSON.stringify(x,null,2);$('decode').textContent=txt;localStorage.setItem(DECODE_STORE,txt);lastCaptureSignature='';await status();await pulseData()}catch(e){err(e)}}
 async function samplePlay(n){try{saveUiSettings();let r=Math.max(1,Math.min(10,parseInt($('repeats').value)||1)),inv=$('invert').checked?1:0;await j('/api/sample/play?name='+n+'&repeat='+r+'&invert='+inv)}catch(e){err(e)}}
 async function sampleDelete(n){try{await j('/api/sample/delete?name='+n);listSamples()}catch(e){err(e)}}
 async function sampleRename(n){let to=prompt('New name for '+decodeURIComponent(n)+':');if(!to)return;try{await j('/api/sample/rename?from='+n+'&to='+encodeURIComponent(to));listSamples()}catch(e){err(e)}}

@@ -207,8 +207,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
       from the sync gap; 3 Unity tests + a Python port in `rfdecode.py`).
 - [ ] More recognizers: Hs2303, Nice FLO, CAME, Holtek HT6P20 — same pattern
       (add to `decode.cpp`, Unity-test, wire into the `specific` chain).
-- [ ] Optional rolling-code detection / warning (KeeLoq-style) so the user
-      knows a fixed replay will not work.
+- [x] Rolling-code advisory — `/api/decode/current` returns `candidate_bit_run`
+      and a `note` warning when a long code (>=60 bits) has no fixed-protocol
+      match ("likely KeeLoq/AES, a replay won't re-open it"); shown above the
+      decode JSON in the UI. Heuristic, not a real KeeLoq detector.
 - [x] Sample rename — `/api/sample/rename?from=&to=` + a Rename button; keeps
       gate assignments pointing at the new name.
 - [ ] Still open: free-text per-sample notes (needs a `315R` format bump or a
