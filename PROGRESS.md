@@ -27,9 +27,11 @@ verified by the Python port instead.
 unit's SoftAP (`cc1101-setup-d0867b`, paired via the shared `ap_pass`), polled
 `/api/status` + `/api/gate`, and parsed them correctly (`mode=idle radio=1`,
 RSSI -31). Buttons + `/api/remote/press` fire the gate via the main unit; a
-`/api/remote/status` endpoint exposes the cached view. Still to verify: the OLED
-rendering and a physical button press (display not yet wired). `tests/` for the
-remote-trigger healthcheck are next. See TASKS "Wi-Fi remote".
+`/api/remote/status` endpoint exposes the cached view. `tests/test_remote.py`
+covers the remote surface + the remote→main trigger path (skips without
+`CC1101_REMOTE_HOST`). Still to verify on hardware: OLED rendering, a physical
+button press, and running the remote suite from a host on the SoftAP.
+See TASKS "Wi-Fi remote".
 
 Hardware: firmware `0b136ca` flashed to a D1 Mini (MAC 5c:cf:7f:d0:86:7b) on
 2026-08-31 and **the full `tests/` device suite passes (31/31, no skips)** against

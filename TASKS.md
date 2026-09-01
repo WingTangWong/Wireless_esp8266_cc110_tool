@@ -65,14 +65,17 @@ fires.
 
 ### Healthcheck / tests
 
-- [ ] `tests/test_remote.py` — skips unless `CC1101_REMOTE_HOST` is set and the
-      remote answers `/api/remote/status`. Checks: role, `mainReachable`,
-      cached main status shape.
-- [ ] End-to-end: with both `CC1101_HOST` and `CC1101_REMOTE_HOST` set,
-      `POST` the remote's `/api/remote/press?button=inner` and confirm the main
-      unit registered the fire (mode transition / `lastFireError`) — the
-      "remote trigger/activation" local build healthcheck.
-- [ ] `tests/README.md` + `requirements-dev.txt` + CI updated.
+- [x] `tests/test_remote.py` — skips unless `CC1101_REMOTE_HOST` is set and the
+      remote answers `/api/remote/status`. Checks role, link + pairing SSID,
+      `mainReachable` + cached-status freshness, and that
+      `POST /api/remote/press` propagates to the main unit's
+      `/api/gate/fire` (an unassigned gate still proves the path).
+- [x] End-to-end (`test_remote_press_end_to_end`, needs both hosts): remote
+      press → main goes `busy` if the gate is ready, else records
+      `lastFireError`.
+- [x] `conftest.py` `remote_host` / `remote_api` fixtures;
+      `tests/README.md` + CI updated.
+- [ ] Run the remote suite against both boards (needs a host on the SoftAP).
 
 ### Later
 
