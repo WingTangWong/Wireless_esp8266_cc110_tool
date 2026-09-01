@@ -1,11 +1,12 @@
-// decode.h - pure pulse-timing analysis, no Arduino / radio dependency.
+// decode.h - pulse-timing analysis kernels, no Arduino / radio dependency.
 //
-// Extracted from main.cpp so the DSP kernels can be unit-tested on the host
-// (pio test -e native) and cross-checked against tools/rfdecode.py. The JSON
-// formatting and the volatile capture buffers stay in main.cpp.
+// Extracted from main.cpp to keep the DSP separate from the I/O. The JSON
+// formatting and the volatile capture buffers stay in main.cpp. This logic is
+// mirrored line-for-line by tools/rfdecode.py, which carries the regression
+// tests (tests/test_rfdecode.py) - the firmware only has an ESP8266 build.
 //
 // A pulse is (durationUs, level) with level 1 = HIGH, 0 = LOW - the DiskPulse
-// layout. Behaviour here must match the firmware exactly.
+// layout. Behaviour here must match rfdecode.py exactly.
 #pragma once
 
 #include <stddef.h>

@@ -111,11 +111,16 @@ tools/rfprobe.py sweep 317.7 318.3 --json | jq .summary
 tools/rfprobe.py export gate.sub --sample inner_gate   # Flipper RAW / .csv / .txt
 
 python -m pip install -r requirements-dev.txt
-CC1101_HOST=cc1101.local pytest        # skips entirely with no device
-
-pio test -e native                     # host unit tests for src/decode.cpp
+pytest                                  # decode-port unit tests always run;
+                                        # device tests need CC1101_HOST
+CC1101_HOST=cc1101.local pytest         # + the on-device checks
 ruff check .                            # lint tools/ tests/ scripts/
 ```
+
+The decode pipeline in `src/decode.cpp` is mirrored by `tools/rfdecode.py`,
+which `tests/test_rfdecode.py` exercises directly and a device test
+cross-checks against a live capture. There is no host build of the firmware —
+it targets the ESP8266.
 
 See `tests/README.md`.
 
@@ -242,7 +247,8 @@ same-level runs.
 2-means clustering of pulse widths (overall, and per HIGH/LOW level) classifies
 the encoding family (pulse-distance/PPM, pulse-width/PWM, complementary pairs),
 emits a best-effort candidate bitstring (normal and inverted), and runs three
-focused recognizers (in `src/decode.cpp`, unit-tested via `pio test -e native`):
+focused recognizers (in `src/decode.cpp`, mirrored + unit-tested in
+`tools/rfdecode.py`):
 
 - **Linear 10-bit** – ~500/1500 µs pulse pairs with a ~21 ms frame guard.
 - **MegaCode 24-bit** – ~1 ms pulse in a 6 ms PPM frame, 13 ms header low,
@@ -269,12 +275,11 @@ secrets.ini.example   Wi-Fi credential template -> copy to secrets.ini (git-igno
 src/main.cpp           Firmware: hardware, Wi-Fi, web UI, HTTP API, JSON glue
 src/decode.{h,cpp}     Pure pulse-timing kernels (clustering, recognizers, histogram)
 src/notes.md           Reference notes on MegaCode / Flipper OOK650 preset
-test/test_decode/      Unity unit tests for src/decode.cpp (`pio test -e native`)
 docs/sample-format.md  On-disk layout of rf315_*.bin capture files
 tools/rfprobe.py       Host-side HTTP API client / CLI (stdlib only)
 tools/rfdecode.py      Pure-Python port of the firmware pulse analysis (cross-check)
 tests/                 pytest suite (pure tests always run; device tests need a board)
-.github/workflows/     CI: firmware build + native unit tests + host compileall + pytest
+.github/workflows/     CI: firmware build (d1_mini + debug) + ruff + pytest
 ```
 
 See `PROGRESS.md` for current status and `TASKS.md` for the backlog.

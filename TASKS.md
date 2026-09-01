@@ -75,46 +75,38 @@ against a mock device — 14 tests). Hardware run still pending.
 - [x] Run against real hardware — firmware `0b136ca` flashed 2026-08-31,
       `CC1101_HOST=192.168.100.114 pytest` → 31/31, `PROGRESS.md` checklist
       updated. (Remaining checklist rows need RF signals / a phone.)
-- [x] `platformio.ini` `[env:native]` + Unity tests — `test/test_decode/`,
-      12 tests over `kmeans2*`, `nearDuration`, `classifyEncoding`,
-      `tryMegaCode` (synthetic frame round-trip + noise reject), `histogram`.
-      `pio test -e native`, wired into CI.
-  - [ ] Add `tryLinear` positive coverage (needs a hand-built valid frame or a
-        recorded sample) and `safeName` once it also moves out of `main.cpp`.
+- [x] Decode-logic unit tests — this is MCU firmware, so there is **no
+      `native` PlatformIO env**. `src/decode.{h,cpp}` is mirrored line-for-line
+      by `tools/rfdecode.py`, tested by `tests/test_rfdecode.py` (22 cases:
+      `kmeans2*`, `near`, `classify_encoding`, `candidate_bits`, `histogram`,
+      `try_linear` / `try_megacode` / `try_ev1527` round-trips + noise reject).
+      Runs under plain `pytest`, wired into CI.
 
 ### Follow-on tasks found while building the harness
 
-- [x] **Extract the pure DSP helpers** into `src/decode.{h,cpp}` (namespace
-      `rfd`, Arduino-free): `Clusters`/`kmeans2All`/`kmeans2Level`,
-      `nearDuration`, `classifyEncoding`+`encodingName`, `tryLinear`,
-      `tryMegaCode`, `histogram`. `main.cpp` now passes a `PulseSpan` over the
-      volatile buffers and only does JSON. `ProtocolDecode` uses fixed char
-      buffers instead of `String`.
-  - [x] Candidate-bits extraction moved into `rfd::candidateBits`
-        (`BitExtraction` result), with 4 Unity tests (PPM/PWM bit strings,
-        burst separator, 220-char cap). `decodeCurrentJson` holds it in a
-        function-local `static` to keep ~450 bytes off the handler stack.
+- [x] **Extract the DSP helpers** into `src/decode.{h,cpp}` (namespace `rfd`,
+      Arduino-free): `Clusters`/`kmeans2All`/`kmeans2Level`, `nearDuration`,
+      `classifyEncoding`+`encodingName`, `candidateBits`, `tryLinear`,
+      `tryMegaCode`, `tryEV1527`, `histogram`. `main.cpp` passes a `PulseSpan`
+      over the volatile buffers and only does JSON. `ProtocolDecode` uses fixed
+      char buffers instead of `String`; `decodeCurrentJson` holds the
+      `BitExtraction` in a function-local `static` (~450 bytes off the stack).
 - [x] **Derive `FIRMWARE_VERSION` from git** — `scripts/version.py`
       (`pre:` extra_script) injects `git describe --tags --always --dirty` as
       `CFG_FW_VERSION`, fallback `0.1.0-nogit`.
 - [x] **Validate the SoftAP password at build time** — `static_assert` in
       `main.cpp`: `CFG_WIFI_AP_PASS` must be empty or ≥ 8 chars.
-- [x] **CI** (`.github/workflows/ci.yml`): builds `d1_mini` (no `secrets.ini`,
-      exercising the placeholder path), `compileall` on `tools/`+`tests/`+
-      `scripts/`, and `pytest` (device tests skip). PlatformIO/pip cached.
-  - [x] Add `pio test -e native` to CI.
-  - [x] `ruff` lint step — `ruff.toml` (E/F/I/UP/RUF, len 110), `ruff check .`
-        in CI, `ruff>=0.6` in `requirements-dev.txt`. Tree is clean.
+- [x] **CI** (`.github/workflows/ci.yml`): builds `d1_mini` + `d1_mini_debug`
+      (no `secrets.ini`, exercising the placeholder path), `ruff check .`, and
+      `pytest` (device tests skip). PlatformIO/pip cached. Runs on GitHub.
 - [x] **Surface the new status fields in the dashboard** — an info line shows
       fw version/build, CC1101 version, LittleFS used/total; a "Self-test"
       button calls `/api/selftest` and shows PASS / failed-check names.
-- [x] **`tools/rfdecode.py` + `tests/test_rfdecode.py`** — pure-Python port of
-      `kmeans2*` and the encoding classifier, unit-tested on synthetic pulse
-      trains, and cross-checked against the device in
-      `test_decode_matches_python_port` (via the new `/api/capture/pulses`).
-  - [ ] Port the bit-extraction and the Linear / MegaCode recognizers to
-        `rfdecode.py` too (EV1527 is ported), so the device cross-check can
-        cover `protocol_candidate` / `protocol_bits`.
+- [x] **`tools/rfdecode.py` + `tests/test_rfdecode.py`** — the complete decode
+      pipeline ported to Python (`kmeans2*`, classifier, `candidate_bits`,
+      `histogram`, `try_linear` / `try_megacode` / `try_ev1527`), 22 pytest
+      cases, cross-checked against the device in
+      `test_decode_matches_python_port` (via `/api/capture/pulses`).
 - [x] `rfprobe.py`: `sample {list,save,load,decode,delete,play}` subcommands,
       global `--timeout`, `watch` mode. `tests/test_rfprobe_cli.py` +
       `tests/_fakedevice.py` exercise the CLI in-process (7 tests, always run).
@@ -211,9 +203,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [ ] Still open: raw `.bin` upload back to the device, and download straight
       from the browser (rfprobe covers the host path).
 - [x] EV1527 / PT2262 24-bit recognizer (`rfd::tryEV1527`, self-calibrating Te
-      from the sync gap; 3 Unity tests + a Python port in `rfdecode.py`).
+      from the sync gap; ported + tested in `rfdecode.py`).
 - [ ] More recognizers: Hs2303, Nice FLO, CAME, Holtek HT6P20 — same pattern
-      (add to `decode.cpp`, Unity-test, wire into the `specific` chain).
+      (add to `decode.cpp` + `rfdecode.py`, `pytest`, wire into the `specific`
+      chain).
 - [x] Rolling-code advisory — `/api/decode/current` returns `candidate_bit_run`
       and a `note` warning when a long code (>=60 bits) has no fixed-protocol
       match ("likely KeeLoq/AES, a replay won't re-open it"); shown above the

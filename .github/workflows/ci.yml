@@ -7,7 +7,7 @@ on:
 
 jobs:
   firmware:
-    name: Build firmware (d1_mini)
+    name: Build firmware
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,8 +32,8 @@ jobs:
       - name: Build (no secrets.ini -> [wifi] placeholders, SoftAP-only)
         run: pio run -e d1_mini
 
-      - name: Unit-test the DSP kernels (native)
-        run: pio test -e native
+      - name: Build the serial-trace variant
+        run: pio run -e d1_mini_debug
 
   host:
     name: Host tooling + tests

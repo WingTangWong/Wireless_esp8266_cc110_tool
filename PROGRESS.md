@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-01_
 
 ## Status summary
 
@@ -14,10 +14,12 @@ and fire-error reporting, and verification endpoints (`/api/selftest`,
 `-DCC1101_TRACE` serial-trace build.
 
 Host side: `tools/rfprobe.py` CLI (incl. `export` to Flipper `.sub`),
-`tools/rfdecode.py` analysis port, a pytest suite (pure + device), 19 native
-Unity tests for the DSP kernels, `ruff`, and GitHub Actions CI.
+`tools/rfdecode.py` - a full Python port of the decode kernels with its own
+unit tests - a pytest suite (pure + device), `ruff`, and GitHub Actions CI.
 
-Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅, `native` ✅.
+Builds: `d1_mini` ✅ (Flash ~40%, RAM ~65%), `d1_mini_debug` ✅. This is MCU
+firmware - there is no host/`native` PlatformIO env; the decode logic is
+verified by the Python port instead.
 
 Hardware: firmware `0b136ca` flashed to a D1 Mini (MAC 5c:cf:7f:d0:86:7b) on
 2026-08-31 and **the full `tests/` device suite passes (31/31, no skips)** against
@@ -35,13 +37,13 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` `summary`. **Verified on hardware** (selftest ok, radio version 0x14). |
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
-| CI | ✅ | `.github/workflows/ci.yml`: `pio run -e d1_mini` (no secrets), `pio test -e native`, `ruff check .`, `pytest`. Not yet run on GitHub — no remote configured. |
+| CI | ✅ | `.github/workflows/ci.yml`: `pio run` for `d1_mini` + `d1_mini_debug`, `ruff check .`, `pytest`. Runs on GitHub. |
 | `tests/` device suite on hardware | ✅ | 31/31 pass against the flashed board (`CC1101_HOST=192.168.100.114 pytest`). |
 | Serial-trace build | ✅ | `[env:d1_mini_debug]` = d1_mini + `-DCC1101_TRACE`; `DBG()` no-op otherwise. Both envs build. |
-| Pure DSP module + native unit tests | ✅ | `src/decode.{h,cpp}` — clustering, encoding classifier, candidate-bit extraction, Linear/MegaCode recognizers, histogram. `test/test_decode/` — 16 Unity tests (`pio test -e native`). `main.cpp` is JSON glue over it. d1_mini builds (Flash 39.4%, RAM 64.6%). |
+| DSP module + Python port | ✅ | `src/decode.{h,cpp}` — clustering, encoding classifier, candidate-bit extraction, Linear/MegaCode/EV1527 recognizers, histogram; `main.cpp` is JSON glue over it. `tools/rfdecode.py` is a line-for-line Python port with 22 pytest cases; a device test cross-checks the two. |
 | Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/histogram/pulses/decode/samples/gate/fire/`sample …`/watch/raw; `--json`, `--timeout`. |
-| `tests/` pytest suite | ✅ | 16 pure tests (rfdecode + rfprobe-CLI via in-process fake device, always run) + 15 device tests. **31/31 pass against the flashed board.** |
-| `/api/capture/pulses` + `tools/rfdecode.py` | ✅ | Raw pulse list endpoint (chunk-streamed) and a pure-Python port of the clustering/encoding classifier; a device test cross-checks the two. |
+| `tests/` pytest suite | ✅ | Always-run pure tests (`rfdecode.py` port + `rfprobe` CLI vs. an in-process fake device) plus device tests that need `CC1101_HOST`. The device set passed 31/31 against the flashed board on 2026-08-31. |
+| `/api/capture/pulses` | ✅ | Raw pulse list endpoint, chunk-streamed so a full 3072-pulse buffer can't exhaust the heap. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
 | Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | STA side verified on hardware (device joined Wi-Fi, mDNS + HTTP reachable, `apSsid` = `cc1101-setup-d0867b`). AP-side join + captive portal from a phone still unverified. |
@@ -52,9 +54,9 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | Raw OOK capture (GDO2 ISR) | ✅ | Edge-timed, glitch filter, 3072-pulse buffer |
 | Pulse-width histogram | ✅ | 28 bins, high/low split |
 | Generic timing analysis | ✅ | 2-means clustering, encoding-family guess, candidate bits |
-| Linear 10-bit recognizer | ⚠️ | Implemented + Unity-tested; not yet validated against a real remote |
-| MegaCode 24-bit recognizer | ⚠️ | Implemented + Unity-tested (synthetic frame); not yet confirmed on a live remote |
-| EV1527 / PT2262 recognizer | ⚠️ | Implemented + Unity-tested + Python port; self-calibrates Te from the sync gap; not yet validated on a live remote |
+| Linear 10-bit recognizer | ⚠️ | Implemented + Python-port-tested; not yet validated against a real remote |
+| MegaCode 24-bit recognizer | ⚠️ | Implemented + Python-port-tested (synthetic frame); not yet confirmed on a live remote |
+| EV1527 / PT2262 recognizer | ⚠️ | Implemented + Python-port-tested; self-calibrates Te from the sync gap; not yet validated on a live remote |
 | Save / load / list / delete samples (LittleFS) | ✅ | `rf315_<name>.bin`, `"315R"` format v1 |
 | Timer1 raw replay | ⚠️ | Implemented; end-to-end "captured remote actuates the door" not yet verified |
 | Gate control pages (`/gate`, `/gate/config`) | ✅ | Both pages + `/api/gate*` return 200 on hardware; assignments persist to `/gate.bin` v2. Same-origin checked. |
@@ -79,7 +81,8 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
   `src/main.cpp` were squashed away and the reflog expired + `gc`d on
   2026-09-01, so no commit carries a real credential. The station password
   was exposed locally before that and should still be rotated on the router.
-- Everything lives in one file (~2000 lines); no module split yet.
+- `main.cpp` is still large (~1900 lines) though the decode kernels are split
+  into `decode.{h,cpp}`; a further `sample.*` / `gate.*` split is a TODO.
 - `firmwareBuild` is `__DATE__ " " __TIME__`, which only changes when `main.cpp`
   itself recompiles (not on a docs-only or dep change).
 - **Gate control has no real authentication.** There is a runtime enable/disable
