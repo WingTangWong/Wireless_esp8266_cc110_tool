@@ -62,6 +62,20 @@
 #include "decode.h"
 
 // -----------------------------------------------------------------------------
+// Optional serial tracing: build with `-DCC1101_TRACE` (or `pio run
+// -e d1_mini_debug`). No-ops in a normal build so the release path is byte-for-
+// byte unchanged. Watch it with `pio device monitor -b 115200`.
+// (Not named DEBUG_SERIAL - that identifier is used inside the ESP8266 core.)
+// -----------------------------------------------------------------------------
+#ifdef CC1101_TRACE
+  #define DBG_BEGIN()   do { Serial.begin(115200); Serial.println(); } while(0)
+  #define DBG(...)      do { Serial.printf(__VA_ARGS__); Serial.println(); } while(0)
+#else
+  #define DBG_BEGIN()   do {} while(0)
+  #define DBG(...)      do {} while(0)
+#endif
+
+// -----------------------------------------------------------------------------
 // Firmware identity (reported on /api/status and /api/selftest for verification)
 // -----------------------------------------------------------------------------
 #ifndef CFG_FW_VERSION
@@ -498,6 +512,7 @@ static void startCapture(uint32_t maxMs) {
   currentMode = "recording";
 
   attachInterrupt(digitalPinToInterrupt(PIN_CC1101_GDO2), rawEdgeISR, CHANGE);
+  DBG("capture start %lu Hz bw=%u maxMs=%lu", targetFrequencyHz, targetBandwidthKhz, maxMs);
 }
 
 static void stopCapture() {
@@ -525,6 +540,7 @@ static void stopCapture() {
   captureDone = pulseCount > 0;
   currentMode = "idle";
   restoreTargetRx();
+  DBG("capture stop pulses=%u dur=%luus trunc=%d", pulseCount, captureDurationUs, captureTruncated);
 }
 
 // -----------------------------------------------------------------------------
@@ -749,6 +765,7 @@ static bool fireGate(const GateAssignment& a) {
   txPowerDbm = savedPwr;
   restoreTargetRx();
   gateLastFireError = "";
+  DBG("gate fire '%s' %lu Hz x%u @ +%d dBm", a.sampleName, a.frequencyHz, repeats, GATE_TX_POWER_DBM);
   return true;
 }
 
@@ -1824,6 +1841,9 @@ static void setupRoutes() {
 // Arduino setup / loop
 // -----------------------------------------------------------------------------
 void setup() {
+  DBG_BEGIN();
+  DBG("cc1101 tool %s (%s)", FIRMWARE_VERSION, FIRMWARE_BUILD);
+
   pinMode(PIN_CC1101_GDO0, INPUT);
   pinMode(PIN_CC1101_GDO2, INPUT);
 
@@ -1835,6 +1855,7 @@ void setup() {
   radioOk = radio.getCC1101();
   radioPartnum = radio.SpiReadStatus(CC1101_PARTNUM);
   radioVersionReg = radio.SpiReadStatus(CC1101_VERSION);
+  DBG("cc1101 ok=%d partnum=0x%02X version=0x%02X", radioOk, radioPartnum, radioVersionReg);
 
   configureRawOok(targetBandwidthKhz);
   setRadioFrequency(targetFrequencyHz);
@@ -1848,9 +1869,13 @@ void setup() {
   gateLoadConfig();
 
   startWifi();
+  DBG("wifi sta=%d ip=%s  ap=%s ip=%s",
+      WiFi.status() == WL_CONNECTED, WiFi.localIP().toString().c_str(),
+      apSsidEffective.c_str(), WiFi.softAPIP().toString().c_str());
 
   setupRoutes();
   server.begin();
+  DBG("http server up");
 }
 
 void loop() {

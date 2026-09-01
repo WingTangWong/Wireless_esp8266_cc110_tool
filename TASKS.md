@@ -221,8 +221,10 @@ on-hardware verification still pending — see `PROGRESS.md`.
 - [ ] Replace hand-built JSON strings with a small builder or ArduinoJson.
 - [x] Removed the unused `mfurga/CC1101` dependency from `platformio.ini`
       (only `SmartRC_CC1101.h` was ever included).
-- [ ] Add an optional debug build (`-D DEBUG_SERIAL`) with serial tracing of
-      capture / decode steps.
+- [x] Optional serial-trace build — `[env:d1_mini_debug]` adds `-DCC1101_TRACE`;
+      `DBG(...)` macro is a no-op otherwise. Traces boot, radio id, Wi-Fi/AP,
+      capture start/stop, gate fire. (Name is `CC1101_TRACE`, not `DEBUG_SERIAL`
+      — that identifier is used inside the ESP8266 core.)
 - [ ] Guard against `server.arg()` parsing surprises (empty / non-numeric).
 - [x] `/api/samples` is chunk-streamed now (one sample row at a time);
       `/api/capture/pulses` too. `/api/sweep/data` still builds one String
