@@ -160,8 +160,8 @@ connected client count), and free heap. Sections:
   Stored in the browser's `localStorage` and pushed to the device.
 - **Decode** – JSON result of the generic timing analysis plus any focused
   protocol match.
-- **Stored samples** – list / load / decode / play / delete saved captures.
-  Playback supports 1–10 repeats and logic inversion.
+- **Stored samples** – list / load / decode / play / rename / delete saved
+  captures. Playback supports 1–10 repeats and logic inversion.
 
 Below the status row: an info line (firmware version/build, CC1101 version,
 LittleFS usage), a **Self-test** button (`/api/selftest`), and a **Gate control**
@@ -192,6 +192,7 @@ The analysis endpoints below are `GET`; the gate-control write endpoints are
 | `/api/sample/decode?name=` | Load and analyze a saved sample |
 | `/api/sample/play?name=&repeat=&invert=` | Timer1 raw replay of a saved sample |
 | `/api/sample/delete?name=` | Delete a saved sample |
+| `/api/sample/rename?from=&to=` | Rename a saved sample (updates gate assignments) |
 | `/api/samples` | List saved samples with header metadata |
 
 ### Gate control
