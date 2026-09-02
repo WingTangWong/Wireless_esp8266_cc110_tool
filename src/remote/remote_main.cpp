@@ -16,9 +16,10 @@
     - linked -> node idle / SENDING / BUSY state, and for each button whether a
       sample is assigned and READY.
 
-  Onboard LED (also the indicator when headless):
-    - offline / out of range  -> slow dim pulse
-    - online / in range       -> slow mid-brightness pulse
+  Onboard LED (also the indicator when headless): a 2 s "heartbeat" breathe -
+  400 ms off, ~650 ms ease-in ramp up, 300 ms at peak, ~650 ms ramp down.
+    - online / in range       -> peak 255
+    - offline / out of range  -> peak 32 (dim)
     - button A pressed         -> fast single-pulse loop  (~2.5 s)
     - button B pressed         -> fast double-pulse + long gap  (~2.5 s)
 
@@ -80,8 +81,8 @@ static constexpr uint8_t PIN_BTN_B = D6;           // GPIO12 - outer
 // -----------------------------------------------------------------------------
 // Status LED (D4/GPIO2, active-low PWM). This is the primary indicator on a
 // headless remote:
-//   offline / out of range  -> slow, dim pulse
-//   online / in range       -> slow, mid-brightness pulse
+//   online / in range       -> "heartbeat" breathe, peak 255
+//   offline / out of range  -> same heartbeat, dim (peak 32)
 //   button A pressed         -> fast single-pulse loop  (~2.5 s)
 //   button B pressed         -> fast double-pulse with a long gap  (~2.5 s)
 // -----------------------------------------------------------------------------
@@ -94,9 +95,31 @@ static void ledButton(char which) {
   ledOverrideUntil = millis() + 2500;
 }
 
-// b: 0 (off) .. 255 (full); LED is active-low, PWM range 0..1023
+// b: 0 (fully off) .. 255 (fully on). LED is active-low; 0 and 255 are driven
+// straight so "0" is really dark (PWM idle still leaks a little light).
 static inline void ledLevel(int b) {
-  analogWrite(PIN_LED, (255 - constrain(b, 0, 255)) * 4);
+  b = constrain(b, 0, 255);
+  if(b == 0)        digitalWrite(PIN_LED, HIGH);            // off
+  else if(b >= 255) digitalWrite(PIN_LED, LOW);             // full
+  else              analogWrite(PIN_LED, (255 - b) * 4);    // active-low PWM (range 1023)
+}
+
+// x, out: 0..1000. Ease-in curve (grows very slowly at first).
+static inline uint32_t easeIn(uint32_t x) {
+  return x * x / 1000 * x / 1000;   // cubic
+}
+
+// Heartbeat over a 2000 ms window: 20% off, 65% eased ramp up+down, 15% at peak.
+//   0-400    off
+//   400-1050 ramp 0 -> peak   (eased)
+//   1050-1350 hold at peak
+//   1350-2000 ramp peak -> 0  (mirror)
+static uint32_t heartbeat(uint32_t phase, uint32_t peak) {
+  if(phase < 400)  return 0;
+  if(phase < 1050) return easeIn((phase - 400) * 1000 / 650) * peak / 1000;
+  if(phase < 1350) return peak;
+  if(phase < 2000) return easeIn((2000 - phase) * 1000 / 650) * peak / 1000;
+  return 0;
 }
 
 static void updateLed(bool online) {
@@ -114,10 +137,7 @@ static void updateLed(bool online) {
     return;
   }
   ledMode = online ? LED_ONLINE : LED_OFFLINE;
-  uint32_t p = t % 3000;                             // slow triangle, 3 s period
-  int tri = (p < 1500 ? p : 3000 - p);               // 0..1500
-  if(ledMode == LED_ONLINE) ledLevel(50 + tri * 130 / 1500);   // mid: 50..180
-  else                      ledLevel(3 + tri * 30 / 1500);     // dim: 3..33
+  ledLevel((int)heartbeat(t % 2000, ledMode == LED_ONLINE ? 255 : 32));
 }
 
 // -----------------------------------------------------------------------------

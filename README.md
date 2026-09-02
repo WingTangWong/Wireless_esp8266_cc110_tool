@@ -275,9 +275,10 @@ shows the result.
 **idle / SENDING / BUSY** state and, per button, the assigned sample name +
 **READY** flag.
 
-**LED** (the indicator when headless): offline → slow dim pulse; online → slow
-mid-brightness pulse; button A → fast single-pulse loop; button B → fast
-double-pulse with a long gap.
+**LED** (the indicator when headless): a 2 s "heartbeat" breathe — 400 ms off,
+an ease-in ramp up, a brief hold at peak, a mirrored ramp down. Online peaks at
+full, offline peaks dim (~32/255). Button A → fast single-pulse loop; button B →
+fast double-pulse with a long gap.
 
 Envs: **`d1_mini_remote`** (OLED), **`d1_mini_remote_headless`** (serial + LED),
 **`d1_mini_remote_selftest`** (headless + verbose serial + a loop that dumps
