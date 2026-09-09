@@ -131,8 +131,8 @@ against a mock device — 14 tests). Hardware run still pending.
       `--upload-port`, `upload_speed`, boot log at 74880) — `README.md`.
 - [x] `tools/rfprobe.py` — stdlib-only CLI: `status`, `selftest`, `tune`,
       `sweep` (waits for idle, dumps `summary`), `record` (`--histogram`
-      `--decode`), `histogram`, `decode`, `samples`, `gate`, `fire`, `raw`;
-      `--json` for piping to `jq`.
+      `--decode`), `histogram`, `decode`, `samples`, `gate`, `fire`, `buttons`
+      (`status`/`calibrate`/`set`/`clear`), `raw`; `--json` for piping to `jq`.
 - [x] Verification fields: `/api/status` gains `firmwareVersion`,
       `firmwareBuild`, `radioPartnum`, `radioVersion`, `fsUsedBytes`,
       `fsTotalBytes`, `busy`; `/api/sweep/data` gains `count` + `summary`
@@ -248,6 +248,32 @@ on-hardware verification still pending — see `PROGRESS.md`.
         sample's capture.
   - [ ] Still open: an actual secret (PIN / basic-auth) on `/gate*` for when the
         network itself is not trusted.
+
+### A0 two-button addon (`BUTTONS.md`)
+
+Two momentary buttons on the single free pin (`A0`) via a resistor ladder →
+four voltage levels. Wiring is soldered permanently.
+
+- [x] `serviceButtons()` in `loop()` — samples `A0` at ~40 Hz, 3-read average +
+      EMA, classifies against `thNoneY/thYX/thXXy/thFloor`, commits a level after
+      `settleMs` (140 ms) debounce, logs every settle transition (serial `DBG` +
+      `/api/buttons` `events` ring + per-level `observed` min/max).
+- [x] Fire mapping — **X → inner**, **Y → outer**, **X+Y (together) → outer then
+      inner**; staggered presses fire per edge. Physical buttons bypass
+      `gateEnabled` but honour their own `btnCfg.enabled`.
+- [x] Gate-fire **FIFO queue** (`gateFireQueue`, depth 3) replaces the
+      single-slot `gateFireRequested`; drained from `loop()` when `!isBusy()`.
+      `/api/gate/fire` enqueues + still 409s when the queue is non-empty.
+- [x] `/api/buttons` (GET), `/api/buttons/config`, `/api/buttons/calibrate`,
+      `/api/buttons/clear` (POST, same-origin). Config persists to `/buttons.bin`
+      (`"BTNS"` v1). `buttons` summary added to `/api/status` + `/api/gate`.
+- [x] Dashboard badge + `/gate` operator-page outline reflect a live press.
+- [x] `tools/rfprobe.py buttons [status|calibrate|set|clear]`; fake-device
+      routes + CLI tests; `/api/buttons` schema tests in `test_device.py`.
+- [ ] **On-hardware:** run `rfprobe buttons calibrate none|x|y|xy`, confirm the
+      four `observed` ranges don't overlap, then a physical press of each combo
+      fires the right gate(s). Bump one of Y's series resistors if X/X+Y are too
+      close to separate.
 
 ### Other P2 items
 

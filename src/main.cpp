@@ -301,8 +301,95 @@ GateAssignment gateOuter{};
 bool gateEnabled = true;
 String gateLastFireError;   // set async by fireGate(); surfaced on /api/gate
 
-bool gateFireRequested = false;
-GateAssignment gateFirePlan{};
+// Gate fires are queued (FIFO) and drained from loop() when the radio is free.
+// A single slot is enough for the web button; the A0 two-button addon can enqueue
+// two at once ("both pressed" -> outer then inner).
+static constexpr uint8_t GATE_FIRE_QUEUE_MAX = 3;
+GateAssignment gateFireQueue[GATE_FIRE_QUEUE_MAX];
+uint8_t        gateFireQueueLen = 0;
+
+static bool gateEnqueueFire(const GateAssignment& a) {
+  if(gateFireQueueLen >= GATE_FIRE_QUEUE_MAX) return false;
+  gateFireQueue[gateFireQueueLen++] = a;
+  return true;
+}
+
+// -----------------------------------------------------------------------------
+// A0 two-button addon (see BUTTONS.md)
+// -----------------------------------------------------------------------------
+// Every GPIO is taken by the CC1101, so two momentary buttons are encoded on the
+// single ADC pin as four voltage levels via a resistor ladder:
+//   none  ~700   Y only ~575   X only ~420   X+Y ~370   (raw counts, 0..1023)
+// Real levels depend on resistor tolerance + ADC nonlinearity, so the firmware
+// measures and logs where A0 settles (serial + the /api/buttons event ring), and
+// thresholds are calibrated from those readings. Config persists to /buttons.bin.
+//   X -> fire button 1 (inner) ; Y -> fire button 2 (outer)
+//   both pressed together -> fire outer, then inner (once the radio is free)
+// The physical buttons bypass gateEnabled ("buttons always work") but honour
+// their own btnCfg.enabled flag.
+static constexpr uint8_t  PIN_BTN_ADC   = A0;
+static constexpr uint32_t BTN_SAMPLE_MS = 25;    // A0 poll cadence (keep modest: analogRead can stall Wi-Fi)
+static constexpr char     BTN_CONFIG_PATH[] = "/buttons.bin";
+static constexpr uint8_t  BTN_EVENT_LOG_MAX = 24;
+
+enum BtnState : uint8_t { BTN_NONE = 0, BTN_X = 1, BTN_Y = 2, BTN_XY = 3 };
+
+static const char* btnStateName(BtnState s) {
+  switch(s) {
+    case BTN_X:  return "x";
+    case BTN_Y:  return "y";
+    case BTN_XY: return "xy";
+    default:     return "none";
+  }
+}
+
+#pragma pack(push, 1)
+struct ButtonConfigFile {
+  char     magic[4];      // "BTNS"
+  uint8_t  version;       // 1
+  uint8_t  enabled;       // 0 = A0 buttons ignored (still measured/logged)
+  uint8_t  reserved0[2];
+  uint16_t thNoneY;       // raw >= this            -> NONE
+  uint16_t thYX;          // [thYX,    thNoneY)      -> Y
+  uint16_t thXXy;         // [thXXy,   thYX)         -> X   ; [thFloor, thXXy) -> XY
+  uint16_t thFloor;       // raw < this             -> NONE (open / short)
+  uint16_t settleMs;      // a level must hold this long before it acts
+  uint16_t reserved1;
+};
+#pragma pack(pop)
+
+struct ButtonConfig {
+  bool     enabled  = true;
+  uint16_t thNoneY  = 640;
+  uint16_t thYX     = 500;
+  uint16_t thXXy    = 398;
+  uint16_t thFloor  = 150;
+  uint16_t settleMs = 140;
+};
+ButtonConfig btnCfg;
+
+// Live sampling state
+uint16_t  btnRaw = 0;            // last single analogRead
+uint16_t  btnSmoothed = 0;       // EMA of the averaged reads
+BtnState  btnState = BTN_NONE;   // committed (debounced) level
+BtnState  btnCandidate = BTN_NONE;
+uint32_t  btnCandidateSinceMs = 0;
+uint32_t  btnLastSampleMs = 0;
+
+// Calibration aid: where each level actually settles, observed since boot / clear
+uint16_t  btnObsMin[4]  = {1023, 1023, 1023, 1023};
+uint16_t  btnObsMax[4]  = {0, 0, 0, 0};
+bool      btnObsSeen[4] = {false, false, false, false};
+
+// Ring log of settle transitions, readable over HTTP so calibration needs no cable
+struct BtnEvent { uint32_t ms; uint8_t from; uint8_t to; uint16_t smoothed; };
+BtnEvent  btnEventLog[BTN_EVENT_LOG_MAX];
+uint8_t   btnEventHead = 0;      // next write slot
+uint8_t   btnEventCount = 0;
+
+// Calibration captures (one smoothed reading per level; midpoints -> thresholds)
+uint16_t  btnCalCentre[4] = {0, 0, 0, 0};
+bool      btnCalHave[4]   = {false, false, false, false};
 
 // -----------------------------------------------------------------------------
 // Utility
@@ -814,6 +901,150 @@ static String gateAssignmentJson(const GateAssignment& a) {
 }
 
 // -----------------------------------------------------------------------------
+// A0 two-button addon: config, sampling, debounce, fire mapping
+// -----------------------------------------------------------------------------
+static void buttonsNormalize(ButtonConfig& c) {
+  if(c.thNoneY > 1023) c.thNoneY = 1023;
+  if(c.thNoneY < 4)    c.thNoneY = 4;
+  if(c.thYX    >= c.thNoneY) c.thYX = c.thNoneY - 1;
+  if(c.thYX    < 3)    c.thYX = 3;
+  if(c.thXXy   >= c.thYX)    c.thXXy = c.thYX - 1;
+  if(c.thXXy   < 2)    c.thXXy = 2;
+  if(c.thFloor >= c.thXXy)   c.thFloor = c.thXXy - 1;
+  c.settleMs = constrain(c.settleMs, (uint16_t)20, (uint16_t)2000);
+}
+
+static void buttonsLoadConfig() {
+  btnCfg = ButtonConfig{};
+  File f = LittleFS.open(BTN_CONFIG_PATH, "r");
+  if(!f) return;
+  ButtonConfigFile c{};
+  bool ok = f.read((uint8_t*)&c, sizeof(c)) == (int)sizeof(c) &&
+            memcmp(c.magic, "BTNS", 4) == 0 && c.version == 1;
+  f.close();
+  if(!ok) return;
+  btnCfg.enabled  = (c.enabled != 0);
+  btnCfg.thNoneY  = c.thNoneY;
+  btnCfg.thYX     = c.thYX;
+  btnCfg.thXXy    = c.thXXy;
+  btnCfg.thFloor  = c.thFloor;
+  btnCfg.settleMs = c.settleMs;
+  buttonsNormalize(btnCfg);
+}
+
+static bool buttonsSaveConfig() {
+  ButtonConfigFile c{};
+  memcpy(c.magic, "BTNS", 4);
+  c.version  = 1;
+  c.enabled  = btnCfg.enabled ? 1 : 0;
+  c.thNoneY  = btnCfg.thNoneY;
+  c.thYX     = btnCfg.thYX;
+  c.thXXy    = btnCfg.thXXy;
+  c.thFloor  = btnCfg.thFloor;
+  c.settleMs = btnCfg.settleMs;
+  File f = LittleFS.open(BTN_CONFIG_PATH, "w");
+  if(!f) return false;
+  bool ok = f.write((uint8_t*)&c, sizeof(c)) == (int)sizeof(c);
+  f.close();
+  return ok;
+}
+
+static BtnState btnClassify(uint16_t raw) {
+  if(raw >= btnCfg.thNoneY) return BTN_NONE;
+  if(raw >= btnCfg.thYX)    return BTN_Y;
+  if(raw >= btnCfg.thXXy)   return BTN_X;
+  if(raw >= btnCfg.thFloor) return BTN_XY;
+  return BTN_NONE;   // below the floor: pin floating / shorted -> treat as released
+}
+
+static void btnLogEvent(BtnState from, BtnState to, uint16_t smoothed) {
+  BtnEvent& e = btnEventLog[btnEventHead];
+  e.ms = millis();
+  e.from = from;
+  e.to = to;
+  e.smoothed = smoothed;
+  btnEventHead = (btnEventHead + 1) % BTN_EVENT_LOG_MAX;
+  if(btnEventCount < BTN_EVENT_LOG_MAX) ++btnEventCount;
+  DBG("A0 button: %s -> %s @ raw~%u  (bands none>=%u y>=%u x>=%u xy>=%u)",
+      btnStateName(from), btnStateName(to), smoothed,
+      btnCfg.thNoneY, btnCfg.thYX, btnCfg.thXXy, btnCfg.thFloor);
+}
+
+// Enqueue one gate fire if it is assigned + ready; otherwise record why.
+static void btnEnqueueGate(const GateAssignment& a, const char* tag) {
+  if(a.sampleName[0] == '\0' || !gateAssignmentValid(a) || !gateSampleExists(a)) {
+    gateLastFireError = String("button ") + tag + ": gate not ready";
+    DBG("A0 button %s: gate not ready", tag);
+    return;
+  }
+  if(!gateEnqueueFire(a)) gateLastFireError = "gate fire queue full";
+}
+
+// A committed level change: fire the gate(s) whose button just became pressed.
+static void btnApplyEdge(BtnState prev, BtnState now) {
+  const bool xPrev = (prev == BTN_X || prev == BTN_XY);
+  const bool yPrev = (prev == BTN_Y || prev == BTN_XY);
+  const bool xNow  = (now  == BTN_X || now  == BTN_XY);
+  const bool yNow  = (now  == BTN_Y || now  == BTN_XY);
+  const bool newX = xNow && !xPrev;
+  const bool newY = yNow && !yPrev;
+
+  if(newX && newY) {            // both pressed together -> outer, then inner
+    btnEnqueueGate(gateOuter, "y");
+    btnEnqueueGate(gateInner, "x");
+  } else if(newX) {
+    btnEnqueueGate(gateInner, "x");
+  } else if(newY) {
+    btnEnqueueGate(gateOuter, "y");
+  }
+}
+
+static void serviceButtons() {
+  const uint32_t now = millis();
+  if(now - btnLastSampleMs < BTN_SAMPLE_MS) return;
+  btnLastSampleMs = now;
+
+  uint32_t acc = 0;
+  for(uint8_t i = 0; i < 3; ++i) acc += analogRead(PIN_BTN_ADC);
+  btnRaw = (uint16_t)(acc / 3);
+  btnSmoothed = btnSmoothed ? (uint16_t)((btnSmoothed * 3 + btnRaw) / 4) : btnRaw;
+
+  const BtnState cls = btnClassify(btnSmoothed);
+
+  btnObsSeen[cls] = true;
+  if(btnSmoothed < btnObsMin[cls]) btnObsMin[cls] = btnSmoothed;
+  if(btnSmoothed > btnObsMax[cls]) btnObsMax[cls] = btnSmoothed;
+
+  if(cls != btnCandidate) {            // level moved: (re)start the settle timer
+    btnCandidate = cls;
+    btnCandidateSinceMs = now;
+    return;
+  }
+  if(cls == btnState) return;                          // already committed
+  if(now - btnCandidateSinceMs < btnCfg.settleMs) return;   // not settled yet
+
+  const BtnState prev = btnState;
+  btnState = cls;
+  btnLogEvent(prev, btnState, btnSmoothed);
+  if(btnCfg.enabled) btnApplyEdge(prev, btnState);
+}
+
+// Recompute thresholds from whatever calibration captures we have. With all four
+// levels captured the boundaries are the midpoints; the floor sits a margin below
+// the lowest (X+Y) level.
+static void btnRecomputeThresholds() {
+  if(!(btnCalHave[BTN_NONE] && btnCalHave[BTN_Y] &&
+       btnCalHave[BTN_X] && btnCalHave[BTN_XY])) return;
+  ButtonConfig c = btnCfg;
+  c.thNoneY = (btnCalCentre[BTN_NONE] + btnCalCentre[BTN_Y]) / 2;
+  c.thYX    = (btnCalCentre[BTN_Y]    + btnCalCentre[BTN_X]) / 2;
+  c.thXXy   = (btnCalCentre[BTN_X]    + btnCalCentre[BTN_XY]) / 2;
+  c.thFloor = (btnCalCentre[BTN_XY] > 60) ? (btnCalCentre[BTN_XY] - 60) : 0;
+  buttonsNormalize(c);
+  btnCfg = c;
+}
+
+// -----------------------------------------------------------------------------
 // Generic timing clustering / decode helpers
 //
 // The pure kernels (clustering, encoding classifier, Linear/MegaCode
@@ -1016,7 +1247,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px;borde
 <body>
 <h1>CC1101 318 MHz Multifunction</h1>
 <p class="sub">WeMOS D1 Mini + SmartRC CC1101 3.0.2 &nbsp;·&nbsp; <a href="/gate" style="color:#6aa8ff">Gate control</a></p>
-<div class="row"><span id="radio" class="badge">radio…</span><span id="mode" class="badge">idle</span><span id="wifi" class="badge">Wi-Fi…</span><span id="ap" class="badge">AP…</span><span id="heap" class="muted"></span></div>
+<div class="row"><span id="radio" class="badge">radio…</span><span id="mode" class="badge">idle</span><span id="btns" class="badge">buttons…</span><span id="wifi" class="badge">Wi-Fi…</span><span id="ap" class="badge">AP…</span><span id="heap" class="muted"></span></div>
 <div class="row"><button class="tiny" onclick="selftest()">Self-test</button><span id="fwinfo" class="muted"></span><span id="selftest" class="muted"></span></div>
 
 <div class="grid">
@@ -1150,6 +1381,12 @@ async function status(){
   let x=await j('/api/status');
   $('radio').textContent=x.radio?'CC1101 OK':'CC1101 ?';
   $('mode').textContent=x.mode;
+  if(x.buttons){let b=x.buttons,l='buttons idle';
+   if(!b.enabled)l='buttons off';
+   else if(b.state==='x')l='BUTTON X';
+   else if(b.state==='y')l='BUTTON Y';
+   else if(b.state==='xy')l='BUTTON X+Y';
+   $('btns').textContent=l+' ('+b.smoothed+')';}
   $('wifi').textContent=x.wifiConnected?(x.wifiSsid+' · '+x.wifiIp+' · '+x.wifiRssi+' dBm'):'Wi-Fi reconnecting…';
   $('wifi').title=x.hostname||'';
   $('ap').textContent=x.apActive?('AP '+x.apSsid+' · '+x.apIp+' · '+x.apClients+' client'+(x.apClients==1?'':'s')):'AP down';
@@ -1251,7 +1488,8 @@ static const char GATE_PAGE[] PROGMEM = R"HTML(
 body{max-width:560px;margin:auto;padding:18px}
 h1{margin:0 0 2px}.sub{color:#9aa0a6;margin:0 0 16px;font-size:13px}
 button.gate{width:100%;font-size:24px;font-weight:700;padding:34px 12px;margin:10px 0;border-radius:16px;background:#1c2733;color:#eee;border:2px solid #3f6b9e;cursor:pointer}
-button.gate:active{background:#24445f}
+button.gate:active,button.gate.pressed{background:#24445f}
+button.gate.pressed{border-color:#e0a94a}
 button.gate:disabled{opacity:.45;cursor:not-allowed}
 .name{display:block;font-size:13px;font-weight:400;color:#9fb6cf;margin-top:6px}
 #toast{min-height:22px;margin-top:8px;font-size:14px}
@@ -1269,11 +1507,14 @@ const $=i=>document.getElementById(i);
 let busy=false;
 async function load(){
  try{let r=await fetch('/api/gate',{cache:'no-store'});let g=await r.json();
+  let bs=(g.buttons&&g.buttons.state)||'none';
   for(let w of ['inner','outer']){let a=g[w];
    $('n-'+w).textContent=a.assigned?(a.sampleName+(a.ready?'':' — unavailable')):'unassigned';
-   $('b-'+w).disabled=busy||!a.ready||!g.enabled;}
+   $('b-'+w).disabled=busy||!a.ready||!g.enabled;
+   $('b-'+w).classList.toggle('pressed',(w==='inner'?(bs==='x'||bs==='xy'):(bs==='y'||bs==='xy')));}
   if(!g.enabled&&!busy)$('toast').textContent='Gate control is disabled (re-enable on the assignment page)';
   else if(g.lastFireError&&!busy)$('toast').textContent='Last fire failed: '+g.lastFireError;
+  else if(!busy&&bs!=='none')$('toast').textContent='Physical button: '+bs.toUpperCase().replace('XY','X+Y');
  }catch(e){$('toast').textContent='status error';}
 }
 async function fire(w){
@@ -1284,7 +1525,7 @@ async function fire(w){
  catch(e){$('toast').textContent='Error: '+e.message;}
  busy=false;load();
 }
-load();setInterval(load,4000);
+load();setInterval(load,1200);
 </script></body></html>
 )HTML";
 
@@ -1519,6 +1760,12 @@ static void setupRoutes() {
     s += ",\"sweepDone\":" + jsonBool(sweepDone);
     s += ",\"sweepCount\":" + String(sweepCount);
     s += ",\"busy\":" + jsonBool(isBusy());
+    s += ",\"buttons\":{\"raw\":" + String(btnRaw);
+    s += ",\"smoothed\":" + String(btnSmoothed);
+    s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
+    s += ",\"x\":" + jsonBool(btnState == BTN_X || btnState == BTN_XY);
+    s += ",\"y\":" + jsonBool(btnState == BTN_Y || btnState == BTN_XY);
+    s += ",\"enabled\":" + jsonBool(btnCfg.enabled) + "}";
     s += "}";
     sendJson(s);
   });
@@ -1827,6 +2074,9 @@ static void setupRoutes() {
     s += ",\"lastFireError\":\"" + jsonEscape(gateLastFireError) + "\"";
     s += ",\"inner\":" + gateAssignmentJson(gateInner);
     s += ",\"outer\":" + gateAssignmentJson(gateOuter);
+    s += ",\"buttons\":{\"enabled\":" + jsonBool(btnCfg.enabled) +
+         ",\"state\":\"" + String(btnStateName(btnState)) + "\"}";
+    s += ",\"queueLen\":" + String(gateFireQueueLen);
     s += "}";
     sendJson(s);
   });
@@ -1879,7 +2129,7 @@ static void setupRoutes() {
   server.on("/api/gate/fire", HTTP_POST, []() {
     if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
     if(!gateEnabled) return sendError("gate control is disabled", 403);
-    if(isBusy() || playbackRequested || gateFireRequested) return sendError("busy", 409);
+    if(isBusy() || playbackRequested || gateFireQueueLen) return sendError("busy", 409);
 
     String which = server.arg("which");
     const GateAssignment* a = (which == "inner") ? &gateInner
@@ -1892,10 +2142,103 @@ static void setupRoutes() {
       return sendError("assigned sample is missing");
     }
 
-    gateFirePlan = *a;
-    gateFireRequested = true;
+    gateEnqueueFire(*a);
     sendJson(String("{\"ok\":true,\"which\":\"") + which +
              "\",\"sampleName\":\"" + jsonEscape(String(a->sampleName)) + "\"}");
+  });
+
+  // ---- A0 two-button addon (BUTTONS.md) ---------------------------------
+  server.on("/api/buttons", HTTP_GET, []() {
+    static const char* const NM[4] = {"none", "x", "y", "xy"};
+    String s = "{\"ok\":true";
+    s += ",\"enabled\":" + jsonBool(btnCfg.enabled);
+    s += ",\"raw\":" + String(btnRaw);
+    s += ",\"smoothed\":" + String(btnSmoothed);
+    s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
+    s += ",\"x\":" + jsonBool(btnState == BTN_X || btnState == BTN_XY);
+    s += ",\"y\":" + jsonBool(btnState == BTN_Y || btnState == BTN_XY);
+    s += ",\"queueLen\":" + String(gateFireQueueLen);
+    s += ",\"settleMs\":" + String(btnCfg.settleMs);
+    s += ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+         ",\"yX\":" + String(btnCfg.thYX) +
+         ",\"xXy\":" + String(btnCfg.thXXy) +
+         ",\"floor\":" + String(btnCfg.thFloor) + "}";
+    s += ",\"observed\":{";
+    for(uint8_t i = 0; i < 4; ++i) {
+      if(i) s += ",";
+      s += "\"" + String(NM[i]) + "\":{\"seen\":" + jsonBool(btnObsSeen[i]) +
+           ",\"min\":" + String(btnObsSeen[i] ? btnObsMin[i] : 0) +
+           ",\"max\":" + String(btnObsSeen[i] ? btnObsMax[i] : 0) + "}";
+    }
+    s += "}";
+    s += ",\"calibration\":{";
+    for(uint8_t i = 0; i < 4; ++i) {
+      if(i) s += ",";
+      s += "\"" + String(NM[i]) + "\":" + (btnCalHave[i] ? String(btnCalCentre[i]) : String("null"));
+    }
+    s += "}";
+    s += ",\"events\":[";
+    for(uint8_t i = 0; i < btnEventCount; ++i) {
+      uint8_t idx = (btnEventHead + BTN_EVENT_LOG_MAX - btnEventCount + i) % BTN_EVENT_LOG_MAX;
+      const BtnEvent& e = btnEventLog[idx];
+      if(i) s += ",";
+      s += "{\"ms\":" + String(e.ms) +
+           ",\"from\":\"" + String(btnStateName((BtnState)e.from)) + "\"" +
+           ",\"to\":\"" + String(btnStateName((BtnState)e.to)) + "\"" +
+           ",\"smoothed\":" + String(e.smoothed) + "}";
+    }
+    s += "]}";
+    sendJson(s);
+  });
+
+  server.on("/api/buttons/config", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    ButtonConfig c = btnCfg;
+    uint32_t v = 0;
+    if(argU32("enabled", v))  c.enabled  = (v != 0);
+    if(argU32("noneY", v))    c.thNoneY  = (uint16_t)v;
+    if(argU32("yX", v))       c.thYX     = (uint16_t)v;
+    if(argU32("xXy", v))      c.thXXy    = (uint16_t)v;
+    if(argU32("floor", v))    c.thFloor  = (uint16_t)v;
+    if(argU32("settleMs", v)) c.settleMs = (uint16_t)v;
+    buttonsNormalize(c);
+    btnCfg = c;
+    if(!buttonsSaveConfig()) return sendError("could not persist button config", 500);
+    sendJson(String("{\"ok\":true,\"enabled\":") + jsonBool(btnCfg.enabled) +
+             ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+             ",\"yX\":" + String(btnCfg.thYX) +
+             ",\"xXy\":" + String(btnCfg.thXXy) +
+             ",\"floor\":" + String(btnCfg.thFloor) + "}" +
+             ",\"settleMs\":" + String(btnCfg.settleMs) + "}");
+  });
+
+  server.on("/api/buttons/calibrate", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    String st = server.arg("state");
+    int idx = (st == "none") ? BTN_NONE : (st == "x") ? BTN_X
+            : (st == "y") ? BTN_Y : (st == "xy") ? BTN_XY : -1;
+    if(idx < 0) return sendError("state must be none, x, y or xy");
+    btnCalCentre[idx] = btnSmoothed;
+    btnCalHave[idx] = true;
+    btnRecomputeThresholds();
+    const bool ready = btnCalHave[0] && btnCalHave[1] && btnCalHave[2] && btnCalHave[3];
+    if(ready && !buttonsSaveConfig()) return sendError("could not persist button config", 500);
+    sendJson(String("{\"ok\":true,\"state\":\"") + st + "\",\"captured\":" + String(btnSmoothed) +
+             ",\"ready\":" + jsonBool(ready) +
+             ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+             ",\"yX\":" + String(btnCfg.thYX) +
+             ",\"xXy\":" + String(btnCfg.thXXy) +
+             ",\"floor\":" + String(btnCfg.thFloor) + "}}");
+  });
+
+  server.on("/api/buttons/clear", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    for(uint8_t i = 0; i < 4; ++i) {
+      btnObsMin[i] = 1023; btnObsMax[i] = 0; btnObsSeen[i] = false;
+      btnCalCentre[i] = 0;  btnCalHave[i] = false;
+    }
+    btnEventHead = 0; btnEventCount = 0;
+    sendJson("{\"ok\":true}");
   });
 
   server.onNotFound([]() {
@@ -1942,6 +2285,7 @@ void setup() {
   }
 
   gateLoadConfig();
+  buttonsLoadConfig();
 
   startWifi();
   DBG("wifi sta=%d ip=%s  ap=%s ip=%s",
@@ -1956,6 +2300,7 @@ void setup() {
 void loop() {
   server.handleClient();
   serviceWifi();
+  serviceButtons();
 
   if(captureActive) {
     if(pulseCount >= MAX_PULSES) captureTruncated = true;
@@ -1971,9 +2316,11 @@ void loop() {
     replayCurrent(playbackRepeats, playbackInvertRequested);
   }
 
-  if(gateFireRequested && !isBusy()) {
-    gateFireRequested = false;
-    fireGate(gateFirePlan);
+  if(gateFireQueueLen && !isBusy()) {
+    GateAssignment a = gateFireQueue[0];
+    for(uint8_t i = 1; i < gateFireQueueLen; ++i) gateFireQueue[i - 1] = gateFireQueue[i];
+    --gateFireQueueLen;
+    fireGate(a);
   }
 
   yield();

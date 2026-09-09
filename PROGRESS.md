@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-09-01_
+_Last updated: 2026-09-08_
 
 ## Status summary
 
@@ -63,7 +63,7 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | `tests/` device suite on hardware | ✅ | 31/31 pass against the flashed board (`CC1101_HOST=192.168.100.114 pytest`). |
 | Serial-trace build | ✅ | `[env:d1_mini_debug]` = d1_mini + `-DCC1101_TRACE`; `DBG()` no-op otherwise. Both envs build. |
 | DSP module + Python port | ✅ | `src/decode.{h,cpp}` — clustering, encoding classifier, candidate-bit extraction, Linear/MegaCode/EV1527 recognizers, histogram; `main.cpp` is JSON glue over it. `tools/rfdecode.py` is a line-for-line Python port with 22 pytest cases; a device test cross-checks the two. |
-| Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/histogram/pulses/decode/samples/gate/fire/`sample …`/watch/raw; `--json`, `--timeout`. |
+| Host API client `tools/rfprobe.py` | ✅ | Stdlib CLI: status/selftest/tune/sweep/record/histogram/pulses/decode/samples/gate/fire/`sample …`/`buttons …`/watch/raw; `--json`, `--timeout`. |
 | `tests/` pytest suite | ✅ | Always-run pure tests (`rfdecode.py` port + `rfprobe` CLI vs. an in-process fake device) plus device tests that need `CC1101_HOST`. The device set passed 31/31 against the flashed board on 2026-08-31. |
 | `/api/capture/pulses` | ✅ | Raw pulse list endpoint, chunk-streamed so a full 3072-pulse buffer can't exhaust the heap. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
@@ -84,6 +84,7 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | Gate control pages (`/gate`, `/gate/config`) | ✅ | Both pages + `/api/gate*` return 200 on hardware; assignments persist to `/gate.bin` v2. Same-origin checked. |
 | Gate fire forces max TX power | ⚠️ | `fireGate()` clamps `txPowerDbm` to +12 and floors repeats at 4, restores dashboard state after. Path exercised via tests; not yet verified to actuate a real gate. |
 | Gate enable toggle + fire-error reporting | ✅ | `gate.bin` v2 (`enabled`), `POST /api/gate/enable`, `lastFireError` on `/api/gate` (returns `enabled:true` on hardware), config-page checkbox, sample→frequency auto-fill. |
+| A0 two-button addon (`BUTTONS.md`) | ⚠️ | `serviceButtons()` reads the `A0` resistor ladder → 4 levels; X→inner, Y→outer, X+Y→outer-then-inner via a gate-fire FIFO. `/api/buttons*` (status/config/calibrate/clear) + `buttons` on `/api/status` `/api/gate`; dashboard badge + `/gate` highlight. Both builds green, 32 pure tests pass. **Needs on-hardware calibration** (`rfprobe buttons calibrate …`) + a physical press check. |
 
 ## Not yet started
 
@@ -135,6 +136,9 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 - [ ] STA and AP stay up together; `apClients` count tracks connections
 - [ ] Assign a sample to each gate button on `/gate/config`; survives reboot
 - [ ] `/gate` buttons fire; assigned gate actuates at forced max power
+- [ ] A0 addon: `rfprobe buttons calibrate none|x|y|xy` → 4 well-separated levels
+- [ ] A0 addon: physical X → inner fires, Y → outer, both → outer then inner
+- [ ] A0 addon: dashboard `buttons` badge + `/gate` outline track a live press
 - [ ] Capture a real 318 MHz remote and see clean pulse pairs
 - [ ] MegaCode / Linear / EV1527 recognizer decodes a real remote
 - [ ] Replay a saved sample and actuate the target device

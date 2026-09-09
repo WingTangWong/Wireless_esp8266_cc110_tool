@@ -254,6 +254,49 @@ A separate, deliberately minimal operator surface for actuating two gates.
 > SoftAP) can actuate the gates while it is enabled. The enable toggle and a
 > future PIN are tracked in `TASKS.md`.
 
+### A0 two-button addon
+
+Every GPIO on the main unit is taken by the CC1101, so an optional pair of
+momentary buttons is wired to the single ADC pin `A0` through a resistor ladder
+(schematic in `BUTTONS.md`). The firmware reads `A0` at ~40 Hz, smooths it, and
+classifies it into four levels:
+
+| Level | Action |
+|-------|--------|
+| none  | — |
+| **X** | fire gate button 1 (**inner**) |
+| **Y** | fire gate button 2 (**outer**) |
+| **X + Y** (pressed together) | fire **outer**, then **inner**, once the radio is free |
+
+Pressing X and then adding Y a moment later fires inner then outer (each button
+edge is handled as it happens). The physical buttons **bypass the gate-enable
+toggle** but honour their own `enabled` flag. Gate fires are queued, so a press
+during a busy radio actuates when it frees up (queue depth 3).
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/buttons` | GET | Live `raw`/`smoothed`/`state`, `thresholds`, per-level `observed` min/max, and an `events` ring of the last 24 settle transitions |
+| `/api/buttons/config` | POST | Set `enabled`, `noneY`, `yX`, `xXy`, `floor`, `settleMs` (persists) |
+| `/api/buttons/calibrate?state=none\|x\|y\|xy` | POST | Capture the current reading for one level; once all four are captured the thresholds are set to the midpoints and saved |
+| `/api/buttons/clear` | POST | Reset the observed ranges + calibration captures |
+
+`/api/status` and `/api/gate` also carry a `buttons` summary, and the dashboard
+badge + `/gate` page highlight a live physical press.
+
+**Calibrating** (thresholds persist to `/buttons.bin`, packed `"BTNS"` v1):
+
+```
+tools/rfprobe.py --host <ip> buttons clear
+#  release everything, then:   tools/rfprobe.py --host <ip> buttons calibrate none
+#  hold X:                     tools/rfprobe.py --host <ip> buttons calibrate x
+#  hold Y:                     tools/rfprobe.py --host <ip> buttons calibrate y
+#  hold both:                  tools/rfprobe.py --host <ip> buttons calibrate xy
+tools/rfprobe.py --host <ip> buttons        # check the observed ranges don't overlap
+```
+
+If X (~420) and X+Y (~370) land too close for the observed ranges to separate,
+raise one of button Y's series resistors to spread the levels further apart.
+
 ## Wi-Fi remote (second D1 Mini)
 
 A second board runs `src/remote/` (env `d1_mini_remote`) as a paired remote:
