@@ -18,6 +18,7 @@ class _State:
         self.pulses = 0
         self.sweep = []
         self.samples = {"sample01": (318_000_000, 50, 120_000)}
+        self.boot = time.time()
         self.gate_enabled = True
         self.btn_enabled = True
         self.btn_state = "none"
@@ -83,6 +84,8 @@ def _handler(state):
                     "captureTruncated": False, "maxPulses": 3072,
                     "sweepDone": bool(state.sweep) and not state.busy,
                     "sweepCount": len(state.sweep), "busy": state.busy,
+                    "uptimeMs": int((time.time() - state.boot) * 1000),
+                    "resetReason": "External System",
                     "buttons": {"raw": 700, "smoothed": 700, "state": state.btn_state,
                                 "x": state.btn_state in ("x", "xy"),
                                 "y": state.btn_state in ("y", "xy"),

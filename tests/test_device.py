@@ -33,7 +33,7 @@ STATUS_FIELDS = {
     "frequencyHz": (int,), "bandwidthKhz": (int,), "heap": (int,),
     "fsUsedBytes": (int,), "fsTotalBytes": (int,), "pulses": (int,),
     "captureDone": bool, "captureTruncated": bool, "maxPulses": (int,),
-    "sweepDone": bool, "busy": bool,
+    "sweepDone": bool, "busy": bool, "uptimeMs": (int,), "resetReason": str,
 }
 
 

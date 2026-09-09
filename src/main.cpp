@@ -17,12 +17,11 @@
     GND   -> GND
 
   Web UI / Wi-Fi
-    Concurrent AP + station (WIFI_AP_STA).
-    - Joins the configured home network, then browse to http://cc1101.local/
-      or the router-assigned DHCP address.
-    - Always hosts its own SoftAP (SSID <ap_ssid>-<chip id>) with a captive
-      portal so a phone connects directly and reaches http://192.168.4.1/
-      with no shared network.
+    Station-only by default (WIFI_STA): joins the configured home network, then
+    browse to http://cc1101.local/ or the router-assigned DHCP address. If the
+    network is out of range it just keeps retrying - there is no AP fallback.
+    Build with -DCFG_WIFI_SERVE_AP=1 to also host a SoftAP (SSID
+    <ap_ssid>-<chip id>) + captive portal on http://192.168.4.1/.
     Credentials come from secrets.ini (git-ignored) via the CFG_WIFI_* build
     defines; copy secrets.ini.example to get started.
 
@@ -99,16 +98,17 @@ static constexpr uint8_t PIN_CC1101_GDO0 = D2;  // module pin 3: async TX data i
 static constexpr uint8_t PIN_CC1101_GDO2 = D1;  // module pin 8: async RX data output
 
 // -----------------------------------------------------------------------------
-// Wi-Fi settings (concurrent AP + station)
+// Wi-Fi settings
 // -----------------------------------------------------------------------------
-// The device always runs its own SoftAP so a phone can connect directly to the
-// dashboard, and at the same time keeps trying to join the configured home
-// network. The same web server answers on both interfaces.
+// Station-only by default: the device joins the configured home network and
+// keeps retrying if it drops. The SoftAP + captive portal is opt-in
+// (-DCFG_WIFI_SERVE_AP=1) - it adds RF/CPU load that is best avoided on a
+// marginal supply.
 //
 // Credentials are NOT stored here. They come from secrets.ini (git-ignored) via
 // the CFG_WIFI_* compile-time defines in platformio.ini. The placeholders below
-// only apply when nothing overrode them, in which case the station join fails
-// and only the SoftAP comes up. See secrets.ini.example.
+// only apply when nothing overrode them, in which case the station join simply
+// keeps failing. See secrets.ini.example.
 #ifndef CFG_WIFI_SSID
 #define CFG_WIFI_SSID "CHANGE_ME_SSID"
 #endif
@@ -121,6 +121,14 @@ static constexpr uint8_t PIN_CC1101_GDO2 = D1;  // module pin 8: async RX data o
 #ifndef CFG_WIFI_AP_PASS
 #define CFG_WIFI_AP_PASS "CHANGE_ME_AP_PASSWORD"
 #endif
+
+// SoftAP serving is opt-in. Default: station-only - join the configured network
+// if it is in range, otherwise keep retrying (no AP fallback, no captive portal).
+// Build with -DCFG_WIFI_SERVE_AP=1 to also bring up the SoftAP + captive portal.
+#ifndef CFG_WIFI_SERVE_AP
+#define CFG_WIFI_SERVE_AP 0
+#endif
+static constexpr bool WIFI_SERVE_AP = (CFG_WIFI_SERVE_AP != 0);
 
 // Station: the 2.4 GHz Wi-Fi network the D1 Mini should join.
 static constexpr char WIFI_SSID[] = CFG_WIFI_SSID;
@@ -229,6 +237,8 @@ uint32_t sweepStepHz = DEFAULT_SWEEP_STEP_HZ;
 uint32_t sweepCurrentHz = DEFAULT_SWEEP_START_HZ;
 uint16_t sweepDwellMs = DEFAULT_SWEEP_DWELL_MS;
 uint16_t sweepBandwidthKhz = DEFAULT_SWEEP_BW_KHZ;
+bool     sweepStepArmed = false;      // radio tuned + in RX, waiting out the dwell
+uint32_t sweepStepStartedMs = 0;      // non-blocking dwell timer
 
 // -----------------------------------------------------------------------------
 // Radio/application state
@@ -490,6 +500,15 @@ static bool argI32(const char* name, int32_t& out) {
 
 static bool isBusy() {
   return captureActive || sweepActive || currentMode == "playback";
+}
+
+// Keep the watchdog + SDK background tasks fed inside a long radio loop without
+// the ~1 ms scheduler hand-off that delay(1)/yield() to the CONT stack can add.
+// The soft WDT can't be widened on the ESP8266 (see setup()), so the rule is:
+// call this at least every ~1 s inside any send/scan loop, and bound the loop.
+static inline void radioServiceWdt() {
+  ESP.wdtFeed();
+  optimistic_yield(1000);   // run SDK/WiFi work only if it has been >1 ms
 }
 
 static void writeGdoFast(uint8_t level) {
@@ -761,6 +780,10 @@ static void replayCurrent(uint8_t repeats, bool invert) {
 
   repeats = constrain(repeats, (uint8_t)1, (uint8_t)10);
 
+  // Bound the per-burst wait: the frame's own airtime + generous slack. If the
+  // Timer1 ISR ever stops advancing we bail instead of spinning forever.
+  const uint32_t burstBudgetMs = (captureDurationUs / 1000UL) + 750UL;
+
   for(uint8_t rep = 0; rep < repeats; ++rep) {
     txIndex = 0;
     txCount = pulseCount;
@@ -782,13 +805,23 @@ static void replayCurrent(uint8_t repeats, bool invert) {
     if(firstUs > 1600000UL) firstUs = 1600000UL;
     timer1_write(firstUs * 5U);
 
-    while(!txDone) delay(0);
+    const uint32_t deadline = millis() + burstBudgetMs;
+    while(!txDone) {
+      radioServiceWdt();
+      if((int32_t)(millis() - deadline) >= 0) {   // ISR stalled - abort this burst
+        DBG("replay burst %u timed out after %lu ms", rep, burstBudgetMs);
+        break;
+      }
+    }
 
     timer1_disable();
     timer1_detachInterrupt();
     writeGdoFast(LOW);
 
-    if(rep + 1 < repeats) delay(20);
+    if(rep + 1 < repeats) {                        // inter-burst gap, WDT kept fed
+      const uint32_t gapEnd = millis() + 20;
+      while((int32_t)(millis() - gapEnd) < 0) radioServiceWdt();
+    }
   }
 
   radio.setSidle();
@@ -1183,26 +1216,38 @@ static void startSweep(uint32_t startHz, uint32_t stopHz, uint32_t stepHz,
   sweepCount = 0;
   sweepDone = false;
   sweepActive = true;
+  sweepStepArmed = false;
   currentMode = "sweeping";
   configureAnalyzer(sweepBandwidthKhz);
 }
 
+// Cooperative: one step is "tune + arm RX" on the first call, then "read RSSI"
+// once the dwell has elapsed. No blocking delay - loop() runs freely between,
+// so HTTP stays responsive and the watchdog is never starved during a scan.
 static void serviceSweep() {
   if(!sweepActive) return;
 
   if(sweepCurrentHz > sweepStopHz || sweepCount >= MAX_SWEEP_POINTS) {
     sweepActive = false;
     sweepDone = true;
+    sweepStepArmed = false;
     currentMode = "idle";
     restoreTargetRx();
     return;
   }
 
-  setRadioFrequency(sweepCurrentHz);
-  radio.SetRx();
-  delay(sweepDwellMs);
+  if(!sweepStepArmed) {
+    setRadioFrequency(sweepCurrentHz);
+    radio.SetRx();
+    sweepStepStartedMs = millis();
+    sweepStepArmed = true;
+    return;                                  // wait out the dwell in later loops
+  }
+  if((int32_t)(millis() - sweepStepStartedMs) < (int32_t)sweepDwellMs) return;
+
   int rssi = radio.getRssi();
   radio.setSidle();
+  sweepStepArmed = false;
 
   sweepHz[sweepCount] = sweepCurrentHz;
   sweepRssi[sweepCount] = (int16_t)rssi;
@@ -1630,6 +1675,7 @@ static void startMdnsIfNeeded() {
 }
 
 static void startWifiAp() {
+  if(!WIFI_SERVE_AP) return;   // station-only build
   if(!apSsidEffective.length()) {
     // Per-device suffix so two units nearby don't share an SSID.
     apSsidEffective = String(WIFI_AP_SSID) + "-" + String(ESP.getChipId(), HEX);
@@ -1652,12 +1698,12 @@ static void startWifiAp() {
 
 static void startWifi() {
   WiFi.persistent(false);
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_SERVE_AP ? WIFI_AP_STA : WIFI_STA);
   WiFi.hostname(WIFI_HOSTNAME);
   WiFi.setAutoReconnect(true);
 
-  // Bring the SoftAP up first so the dashboard is reachable even if the home
-  // network is out of range or misconfigured.
+  // SoftAP first (if enabled) so the dashboard is reachable even when the home
+  // network is out of range. Station-only builds just keep retrying the join.
   startWifiAp();
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -1666,18 +1712,20 @@ static void startWifi() {
   while(WiFi.status() != WL_CONNECTED &&
         (uint32_t)(millis() - started) < WIFI_CONNECT_TIMEOUT_MS) {
     delay(50);
-    yield();
+    ESP.wdtFeed();
   }
 
   startMdnsIfNeeded();
 }
 
 static void serviceWifi() {
-  // Keep the SoftAP alive regardless of station state.
-  if(!apActive || (WiFi.getMode() & WIFI_AP) == 0) {
-    startWifiAp();
+  if(WIFI_SERVE_AP) {
+    // Keep the SoftAP alive regardless of station state.
+    if(!apActive || (WiFi.getMode() & WIFI_AP) == 0) {
+      startWifiAp();
+    }
+    dnsServer.processNextRequest();
   }
-  dnsServer.processNextRequest();
 
   if(WiFi.status() == WL_CONNECTED) {
     startMdnsIfNeeded();
@@ -1954,7 +2002,7 @@ static void setupRoutes() {
     for(uint16_t i = 0; i < pulseCount; ++i) {
       if(i) s += ',';
       s += '[' + String(pulseDurations[i]) + ',' + String(pulseLevels[i]) + ']';
-      if(s.length() > 1024) { server.sendContent(s); s = ""; }
+      if(s.length() > 1024) { server.sendContent(s); s = ""; radioServiceWdt(); }
     }
     s += "]}";
     server.sendContent(s);
@@ -2039,6 +2087,7 @@ static void setupRoutes() {
     Dir dir = LittleFS.openDir("/");
 
     while(dir.next()) {
+      radioServiceWdt();          // LittleFS walk + chunked send: keep the WDT fed
       String base = dir.fileName();
       if(base.startsWith("/")) base = base.substring(1, base.length());
       if(!base.startsWith("rf315_") || !base.endsWith(".bin")) continue;
@@ -2262,7 +2311,16 @@ static void setupRoutes() {
 // -----------------------------------------------------------------------------
 void setup() {
   DBG_BEGIN();
-  DBG("cc1101 tool %s (%s)", FIRMWARE_VERSION, FIRMWARE_BUILD);
+  DBG("cc1101 tool %s (%s)  reset=%s", FIRMWARE_VERSION, FIRMWARE_BUILD,
+      ESP.getResetReason().c_str());
+
+  // The ~3.2 s software watchdog cannot actually be widened or switched off on
+  // the ESP8266: ESP.wdtEnable()'s timeout argument is ignored, and
+  // ESP.wdtDisable() (system_soft_wdt_stop) is re-armed by the SDK on the next
+  // yield()/delay(). So don't pretend to - FEED it instead. Every long CC1101
+  // send/scan path calls radioServiceWdt() well inside 3.2 s and is
+  // time-bounded so it can never spin forever; the ~8 s hardware watchdog is
+  // the backstop if a path ever stops feeding altogether.
 
   pinMode(PIN_CC1101_GDO0, INPUT);
   pinMode(PIN_CC1101_GDO2, INPUT);
@@ -2300,6 +2358,7 @@ void setup() {
 }
 
 void loop() {
+  ESP.wdtFeed();          // feed the soft WDT once per iteration
   server.handleClient();
   serviceWifi();
   serviceButtons();
@@ -2322,7 +2381,9 @@ void loop() {
     GateAssignment a = gateFireQueue[0];
     for(uint8_t i = 1; i < gateFireQueueLen; ++i) gateFireQueue[i - 1] = gateFireQueue[i];
     --gateFireQueueLen;
+    radioServiceWdt();
     fireGate(a);
+    radioServiceWdt();
   }
 
   yield();
