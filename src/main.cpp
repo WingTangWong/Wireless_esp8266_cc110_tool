@@ -370,12 +370,25 @@ struct ButtonConfigFile {
 };
 #pragma pack(pop)
 
+// Defaults measured on the built hardware (220R ladder), settled values:
+//   none 717..736   Y 603   X 400..447   X+Y 385
+// Boundaries sit between those, biased so an ambiguous reading falls to the
+// *safer* side - a missed press is an annoyance, a false one actuates a gate:
+//   thNoneY 640  none has 77 counts of headroom, Y has 37
+//   thYX    500  Y has 103, X has 97
+//   thXXy   200  X+Y is folded into X. Those two bands are only ~17 counts
+//                apart on this ladder, so they cannot be told apart reliably;
+//                since comboEnabled is off the X+Y band has no job, and
+//                collapsing it means a drifting X press still fires inner
+//                instead of silently doing nothing. Raise this (and set
+//                comboEnabled) only if the ladder is rebuilt with values that
+//                actually separate X from X+Y.
 struct ButtonConfig {
   bool     enabled  = true;
   bool     comboEnabled = false;   // X+Y off: service one button at a time
   uint16_t thNoneY  = 640;
   uint16_t thYX     = 500;
-  uint16_t thXXy    = 398;
+  uint16_t thXXy    = 200;
   uint16_t thFloor  = 150;
   uint16_t settleMs = 140;
 };

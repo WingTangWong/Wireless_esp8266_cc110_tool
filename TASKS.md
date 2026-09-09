@@ -258,9 +258,11 @@ four voltage levels. Wiring is soldered permanently.
       EMA, classifies against `thNoneY/thYX/thXXy/thFloor`, commits a level after
       `settleMs` (140 ms) debounce, logs every settle transition (serial `DBG` +
       `/api/buttons` `events` ring + per-level `observed` min/max).
-- [x] Fire mapping — **X → inner**, **Y → outer**, **X+Y (together) → outer then
-      inner**; staggered presses fire per edge. Physical buttons bypass
-      `gateEnabled` but honour their own `btnCfg.enabled`.
+- [x] Fire mapping — **X → inner**, **Y → outer**. One button at a time: only a
+      press from fully-released fires, nothing queues while a fire is pending or
+      the radio is busy. **X+Y is off by default** (`comboEnabled`); when on it
+      fires outer then inner. Physical buttons bypass `gateEnabled` but honour
+      their own `btnCfg.enabled`.
 - [x] Gate-fire **FIFO queue** (`gateFireQueue`, depth 3) replaces the
       single-slot `gateFireRequested`; drained from `loop()` when `!isBusy()`.
       `/api/gate/fire` enqueues + still 409s when the queue is non-empty.
@@ -270,10 +272,14 @@ four voltage levels. Wiring is soldered permanently.
 - [x] Dashboard badge + `/gate` operator-page outline reflect a live press.
 - [x] `tools/rfprobe.py buttons [status|calibrate|set|clear]`; fake-device
       routes + CLI tests; `/api/buttons` schema tests in `test_device.py`.
-- [ ] **On-hardware:** run `rfprobe buttons calibrate none|x|y|xy`, confirm the
-      four `observed` ranges don't overlap, then a physical press of each combo
-      fires the right gate(s). Bump one of Y's series resistors if X/X+Y are too
-      close to separate.
+- [x] **On-hardware, verified:** settled levels are none 717-736, Y 603,
+      X 400-447, X+Y 385. X vs X+Y is only ~17 counts - not separable - and
+      switch contact resistance on the 220R ladder makes a held press chatter
+      across bands. Fixed by servicing one button at a time (fire only from a
+      clean release), disabling the X+Y combo, and folding the X+Y band into X
+      (`thXXy` 200). Physical X -> inner and Y -> outer confirmed working.
+- [ ] Rebuild the ladder at ~10k (same ratios) to make X+Y usable, then
+      recalibrate and `buttons set --combo`.
 
 ### Other P2 items
 

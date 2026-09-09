@@ -94,8 +94,8 @@ ap_pass  = pick-a-strong-passphrase   # >= 8 chars, or "" for an open AP
 
 PlatformIO injects these as `CFG_WIFI_*` defines (`platformio.ini` →
 `extra_configs`). If `secrets.ini` is missing, the placeholder values in
-`platformio.ini` are used, the firmware still builds, and only the SoftAP comes
-up (the station join just fails).
+`platformio.ini` are used and the firmware still builds — it just never joins a
+network (unless built with `-DCFG_WIFI_SERVE_AP=1`, which gives you the SoftAP).
 
 ```bash
 pio run -e d1_mini            # build (default)
@@ -142,22 +142,23 @@ See `tests/README.md`.
 
 ### Reaching the dashboard
 
-The device runs **concurrent AP + station** (`WIFI_AP_STA`): it always hosts its
-own access point *and* keeps trying to join your home network.
+The device is **station-only** by default (`WIFI_STA`): it joins the configured
+network and keeps retrying if it drops. There is no AP fallback.
 
 | Path | URL |
 |------|-----|
 | Via your network (mDNS) | `http://cc1101.local/` |
 | Via your network (DHCP) | address shown by your router / on `/api/status` |
-| Direct — join the SoftAP from a phone | `http://192.168.4.1/` (or just wait for the captive-portal prompt) |
 
-The SoftAP SSID is `<ap_ssid>-<chip-id>` (e.g. `cc1101-setup-a1b2c3`) so nearby
-units don't collide; the exact name is on `/api/status` (`apSsid`) and in the
-dashboard status row. A DNS catch-all + redirect on the AP makes the phone's
-"sign in to network" sheet open the dashboard automatically.
+Build with **`-DCFG_WIFI_SERVE_AP=1`** to additionally host a SoftAP with a
+captive portal, reachable at `http://192.168.4.1/`. The SSID is then
+`<ap_ssid>-<chip-id>` (e.g. `cc1101-setup-a1b2c3`) so nearby units don't
+collide; the exact name is on `/api/status` (`apSsid`). A DNS catch-all +
+redirect makes a phone's "sign in to network" sheet open the dashboard.
 
-The same web server answers on both interfaces. The SoftAP stays up even when
-the home network is out of range, so the dashboard is always reachable.
+The AP is off by default because it costs RF/CPU time and ~3.7 KB of heap, and
+this build targets a single-user in-car install where the station link is
+always the one in use.
 
 > **Credential history:** early commits once carried Wi-Fi credentials inline in
 > `src/main.cpp`. That history was squashed into the "Initial import" commit and
@@ -169,8 +170,8 @@ the home network is out of range, so the dashboard is always reachable.
 ## Web UI
 
 Single self-contained page served from PROGMEM. A status row across the top shows
-radio state, current mode, station Wi-Fi (SSID / IP / RSSI), SoftAP (SSID / IP /
-connected client count), and free heap. Sections:
+radio state, current mode, live A0 button state, station Wi-Fi (SSID / IP /
+RSSI), SoftAP (SSID / IP / connected client count, when enabled), and free heap. Sections:
 
 - **Target frequency** – tune to an exact MHz value, pick capture bandwidth
   (58 / 270 / 650 kHz), and nudge ±5/20/100 kHz.
@@ -200,7 +201,7 @@ The analysis endpoints below are `GET`; the gate-control write endpoints are
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/api/status` | Firmware version/build, CC1101 partnum/version, Wi-Fi / SoftAP / capture / sweep state, heap, LittleFS usage |
+| `/api/status` | Firmware version/build, CC1101 partnum/version, Wi-Fi / SoftAP / capture / sweep state, heap, LittleFS usage, `uptimeMs`, `resetReason`, live `buttons` state |
 | `/api/selftest` | One-call health check: SPI, radio version, LittleFS, heap, network → `{ok, checks:{…}}` |
 | `/api/config?...` | Set runtime data rate, TX power, and decoder timing params |
 | `/api/tune?hz=&bw=` | Set target frequency (Hz) and bandwidth (kHz) |
@@ -247,8 +248,8 @@ A separate, deliberately minimal operator surface for actuating two gates.
   After the burst the dashboard's target frequency and RX state are restored.
 - Picking a sample on `/gate/config` auto-fills the frequency from that sample's
   capture.
-- Served on both the station and SoftAP interfaces, so the gate page works from
-  a phone joined to `cc1101-setup` with no other network.
+- Served on the station interface (and on the SoftAP too, in a
+  `-DCFG_WIFI_SERVE_AP=1` build).
 
 > There is still **no authentication** — anyone who can reach the device (LAN or
 > SoftAP) can actuate the gates while it is enabled. The enable toggle and a
@@ -258,32 +259,44 @@ A separate, deliberately minimal operator surface for actuating two gates.
 
 Every GPIO on the main unit is taken by the CC1101, so an optional pair of
 momentary buttons is wired to the single ADC pin `A0` through a resistor ladder
-(schematic in `BUTTONS.md`). The firmware reads `A0` at ~40 Hz, smooths it, and
-classifies it into four levels:
+(schematic in `BUTTONS.md`). The firmware reads `A0` at ~40 Hz, smooths it (EMA),
+and classifies it against four thresholds; a level must hold for `settleMs`
+(140 ms) before it counts.
 
-| Level | Action |
+| Press | Action |
 |-------|--------|
-| none  | — |
 | **X** | fire gate button 1 (**inner**) |
 | **Y** | fire gate button 2 (**outer**) |
-| **X + Y** (pressed together) | fire **outer**, then **inner**, once the radio is free |
+| **X + Y** | nothing, unless `comboEnabled` — then **outer**, then **inner** |
 
-Pressing X and then adding Y a moment later fires inner then outer (each button
-edge is handled as it happens). The physical buttons **bypass the gate-enable
-toggle** but honour their own `enabled` flag. Gate fires are queued, so a press
-during a busy radio actuates when it frees up (queue depth 3).
+**One button is serviced at a time:**
+
+- Only a press that starts from **fully released** fires. Any wander mid-hold
+  (X↔Y↔X+Y — real, on a low-value ladder where switch contact resistance shifts
+  the divider) is ignored until you let go.
+- Nothing is queued while a fire is pending or the radio is busy; that records
+  `button ignored: gate busy` in `lastFireError`.
+- The X+Y combo is **off by default** (`comboEnabled`). Turn it on only if the
+  ladder actually separates X from X+Y.
+
+The physical buttons **bypass the gate-enable toggle** but honour their own
+`enabled` flag. Both the button and web paths converge on the same
+`gateEnqueueFire()` → `fireGate()`, so the transmit is identical.
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/buttons` | GET | Live `raw`/`smoothed`/`state`, `thresholds`, per-level `observed` min/max, and an `events` ring of the last 24 settle transitions |
-| `/api/buttons/config` | POST | Set `enabled`, `noneY`, `yX`, `xXy`, `floor`, `settleMs` (persists) |
+| `/api/buttons` | GET | Live `raw`/`smoothed`/`state`, `enabled`, `comboEnabled`, `thresholds`, per-level `observed` min/max, and an `events` ring of the last 24 settle transitions |
+| `/api/buttons/config` | POST | Set `enabled`, `combo`, `noneY`, `yX`, `xXy`, `floor`, `settleMs` (persists) |
 | `/api/buttons/calibrate?state=none\|x\|y\|xy` | POST | Capture the current reading for one level; once all four are captured the thresholds are set to the midpoints and saved |
 | `/api/buttons/clear` | POST | Reset the observed ranges + calibration captures |
 
 `/api/status` and `/api/gate` also carry a `buttons` summary, and the dashboard
 badge + `/gate` page highlight a live physical press.
 
-**Calibrating** (thresholds persist to `/buttons.bin`, packed `"BTNS"` v1):
+**Calibrating** (config persists to `/buttons.bin`, packed `"BTNS"` v1). The
+firmware logs every settle transition to the `events` ring and tracks per-level
+`observed` min/max, so you can read the real landing values back over HTTP with
+no serial cable:
 
 ```
 tools/rfprobe.py --host <ip> buttons clear
@@ -292,10 +305,17 @@ tools/rfprobe.py --host <ip> buttons clear
 #  hold Y:                     tools/rfprobe.py --host <ip> buttons calibrate y
 #  hold both:                  tools/rfprobe.py --host <ip> buttons calibrate xy
 tools/rfprobe.py --host <ip> buttons        # check the observed ranges don't overlap
+tools/rfprobe.py --host <ip> buttons set --x-xy 200 --no-combo   # or set them by hand
 ```
 
-If X (~420) and X+Y (~370) land too close for the observed ranges to separate,
-raise one of button Y's series resistors to spread the levels further apart.
+Measured on the built hardware (220 Ω ladder), settled values:
+**none 717–736, Y 603, X 400–447, X+Y 385**. X and X+Y are only ~17 counts
+apart — too close to separate reliably — so the shipped defaults fold X+Y into
+the X band (`xXy` = 200) and leave the combo off. A drifting X press then still
+fires inner instead of silently doing nothing. To get a usable combo, rebuild
+the ladder with larger values (~10 kΩ, same ratios): that keeps the same four
+target voltages while making switch contact resistance negligible and cutting
+the always-on current ~50×.
 
 ## Wi-Fi remote (second D1 Mini)
 

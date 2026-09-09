@@ -1,11 +1,11 @@
 # Progress
 
-_Last updated: 2026-09-08_
+_Last updated: 2026-09-09_
 
 ## Status summary
 
-Firmware (`src/main.cpp` + `src/decode.{h,cpp}`): concurrent AP+station Wi-Fi
-with a per-device SSID and captive portal, the analysis dashboard, RSSI sweep
+Firmware (`src/main.cpp` + `src/decode.{h,cpp}`): station-only Wi-Fi (the
+per-device SoftAP + captive portal is now opt-in), the analysis dashboard, RSSI sweep
 with peak/offset readout, raw capture + timing analysis, Linear / MegaCode /
 EV1527 recognizers, a rolling-code advisory, LittleFS sample storage with
 rename, Timer1 replay, the two-button gate control pages with an enable toggle
@@ -49,14 +49,14 @@ it — selftest, status schema, tune round-trip + out-of-band reject, RSSI sweep
 (point count / range / summary), capture mode cycle, histogram sums, gate/sample
 schemas, and a live decode cross-check against `rfdecode.py`. Free heap ~18 KB.
 Still unverified: end-to-end RF (capturing a real remote, protocol recognizers on
-real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
+real signals), the SoftAP/captive-portal from a phone (now an opt-in build).
 
 ## What works
 
 | Area | State | Notes |
 |------|-------|-------|
 | PlatformIO build | ✅ | Board `d1_mini`, Arduino framework |
-| Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini` (SoftAP-only). |
+| Wi-Fi credentials out of source | ✅ | `secrets.ini` (git-ignored) → `CFG_WIFI_*` build defines; `platformio.ini` holds only `CHANGE_ME` placeholders. Builds without `secrets.ini`. |
 | Verification endpoints | ✅ | `/api/selftest` (SPI/radio/FS/heap/network), fw version+build, CC1101 partnum/version, LittleFS usage on `/api/status`; `/api/sweep/data` `summary`. **Verified on hardware** (selftest ok, radio version 0x14). |
 | Build metadata | ✅ | `scripts/version.py` injects `git describe` as `CFG_FW_VERSION` (fallback `0.1.0-nogit`); `static_assert` rejects a SoftAP password that is non-empty and < 8 chars. |
 | CI | ✅ | `.github/workflows/ci.yml`: `pio run` for `d1_mini` + `d1_mini_debug`, `ruff check .`, `pytest`. Runs on GitHub. |
@@ -68,7 +68,7 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | `/api/capture/pulses` | ✅ | Raw pulse list endpoint, chunk-streamed so a full 3072-pulse buffer can't exhaust the heap. |
 | CC1101 SPI init | ✅ | `radio.getCC1101()` reports presence as `radioOk` |
 | Wi-Fi station + auto-reconnect | ✅ | 30 s connect timeout, 10 s retry loop |
-| Concurrent SoftAP (`WIFI_AP_STA`) | ⚠️ | STA side verified on hardware (device joined Wi-Fi, mDNS + HTTP reachable, `apSsid` = `cc1101-setup-d0867b`). AP-side join + captive portal from a phone still unverified. |
+| SoftAP + captive portal (opt-in) | ⚠️ | Off by default now (`-DCFG_WIFI_SERVE_AP=1` to build it in). STA side verified on hardware. AP-side join + captive portal from a phone still unverified. |
 | mDNS (`cc1101.local`) | ✅ | Started once Wi-Fi is up |
 | Web UI (single PROGMEM page) | ✅ | Self-contained, `localStorage`-backed settings; info line (fw/CC1101/FS), Self-test button, authorized-use footer |
 | `/api/status` polling | ✅ | UI polls every 900 ms |
@@ -82,9 +82,11 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 | Save / load / list / delete samples (LittleFS) | ✅ | `rf315_<name>.bin`, `"315R"` format v1 |
 | Timer1 raw replay | ⚠️ | Implemented; end-to-end "captured remote actuates the door" not yet verified |
 | Gate control pages (`/gate`, `/gate/config`) | ✅ | Both pages + `/api/gate*` return 200 on hardware; assignments persist to `/gate.bin` v2. Same-origin checked. |
-| Gate fire forces max TX power | ⚠️ | `fireGate()` clamps `txPowerDbm` to +12 and floors repeats at 4, restores dashboard state after. Path exercised via tests; not yet verified to actuate a real gate. |
+| Gate fire forces max TX power | ✅ | `fireGate()` clamps `txPowerDbm` to +12 and floors repeats at 4, restores dashboard state after. Fires cleanly on hardware from both the web and A0 buttons. Note the assigned samples are ~2 s each x4 repeats, so a fire blocks `loop()`/HTTP for ~8 s — accepted for this single-user in-car install. |
 | Gate enable toggle + fire-error reporting | ✅ | `gate.bin` v2 (`enabled`), `POST /api/gate/enable`, `lastFireError` on `/api/gate` (returns `enabled:true` on hardware), config-page checkbox, sample→frequency auto-fill. |
-| A0 two-button addon (`BUTTONS.md`) | ⚠️ | `serviceButtons()` reads the `A0` resistor ladder → 4 levels; X→inner, Y→outer, X+Y→outer-then-inner via a gate-fire FIFO. `/api/buttons*` (status/config/calibrate/clear) + `buttons` on `/api/status` `/api/gate`; dashboard badge + `/gate` highlight. Both builds green, 32 pure tests pass. **Needs on-hardware calibration** (`rfprobe buttons calibrate …`) + a physical press check. |
+| A0 two-button addon (`BUTTONS.md`) | ✅ | `serviceButtons()` reads the `A0` resistor ladder → 4 levels; X→inner, Y→outer via a gate-fire FIFO, one button at a time (fires only from a clean release). **Verified on hardware:** settled levels none 717-736 / Y 603 / X 400-447 / X+Y 385; physical X and Y fire the right gate, no resets. X+Y combo off — those two bands are ~17 counts apart on the 220R ladder, so X+Y folds into X (`thXXy` 200). `/api/buttons*` + `buttons` on `/api/status` `/api/gate`; dashboard badge + `/gate` highlight. |
+| Watchdog / blocking radio paths | ✅ | The ~3.2 s soft WDT can't be widened or disabled on the ESP8266 (wdtEnable's arg is ignored; wdtDisable is re-armed by the SDK), so every long CC1101 path feeds it (`radioServiceWdt()`) and is time-bounded. `replayCurrent()` has a per-burst deadline; `serviceSweep()` is fully cooperative (no blocking dwell). Gate fires no longer trip the WDT — verified on hardware. |
+| Station-only Wi-Fi | ✅ | `WIFI_STA` by default, no SoftAP/captive portal (+3.7 KB heap). `-DCFG_WIFI_SERVE_AP=1` restores the AP. |
 
 ## Not yet started
 
@@ -136,9 +138,11 @@ real signals, replay actuating a gate), the SoftAP/captive-portal from a phone.
 - [ ] STA and AP stay up together; `apClients` count tracks connections
 - [ ] Assign a sample to each gate button on `/gate/config`; survives reboot
 - [ ] `/gate` buttons fire; assigned gate actuates at forced max power
-- [ ] A0 addon: `rfprobe buttons calibrate none|x|y|xy` → 4 well-separated levels
-- [ ] A0 addon: physical X → inner fires, Y → outer, both → outer then inner
-- [ ] A0 addon: dashboard `buttons` badge + `/gate` outline track a live press
+- [x] A0 addon: levels measured (none 717-736 / Y 603 / X 400-447 / X+Y 385);
+      X vs X+Y not separable on the 220R ladder → combo disabled, X+Y folded into X
+- [x] A0 addon: physical X → inner fires, Y → outer fires, no watchdog reset
+- [x] A0 addon: dashboard `buttons` badge + `/gate` outline track a live press
+- [ ] A0 addon: rebuild ladder at ~10k so the X+Y combo becomes usable
 - [ ] Capture a real 318 MHz remote and see clean pulse pairs
 - [ ] MegaCode / Linear / EV1527 recognizer decodes a real remote
 - [ ] Replay a saved sample and actuate the target device
