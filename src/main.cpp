@@ -1760,6 +1760,8 @@ static void setupRoutes() {
     s += ",\"sweepDone\":" + jsonBool(sweepDone);
     s += ",\"sweepCount\":" + String(sweepCount);
     s += ",\"busy\":" + jsonBool(isBusy());
+    s += ",\"uptimeMs\":" + String(millis());
+    s += ",\"resetReason\":\"" + jsonEscape(ESP.getResetReason()) + "\"";
     s += ",\"buttons\":{\"raw\":" + String(btnRaw);
     s += ",\"smoothed\":" + String(btnSmoothed);
     s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
