@@ -235,18 +235,21 @@ def cmd_buttons(args):
                 params[key] = v
         if args.enable is not None:
             params["enabled"] = 1 if args.enable else 0
+        if args.combo is not None:
+            params["combo"] = 1 if args.combo else 0
         if not params:
             raise ApiError("buttons set needs at least one of --none-y/--y-x/--x-xy/"
-                           "--floor/--settle-ms/--enable/--disable")
+                           "--floor/--settle-ms/--enable/--disable/--combo/--no-combo")
         d = api(args, "/api/buttons/config", params, method="POST")
-        return emit(args, d, f"saved: enabled={d.get('enabled')} thresholds={d.get('thresholds')} "
-                             f"settleMs={d.get('settleMs')}")
+        return emit(args, d, f"saved: enabled={d.get('enabled')} combo={d.get('comboEnabled')} "
+                             f"thresholds={d.get('thresholds')} settleMs={d.get('settleMs')}")
 
     d = api(args, "/api/buttons")
     t = d.get("thresholds", {})
     obs = d.get("observed", {})
     lines = [
-        f"{'ENABLED' if d.get('enabled') else 'DISABLED'}  state={d.get('state')}  "
+        f"{'ENABLED' if d.get('enabled') else 'DISABLED'}  "
+        f"X+Y combo {'on' if d.get('comboEnabled') else 'off'}  state={d.get('state')}  "
         f"raw={d.get('raw')} smoothed={d.get('smoothed')}  queue={d.get('queueLen')}",
         f"  bands: none>={t.get('noneY')}  y>={t.get('yX')}  x>={t.get('xXy')}  "
         f"xy>={t.get('floor')}   settleMs={d.get('settleMs')}",
@@ -415,6 +418,10 @@ def build_parser():
                    help="set: act on the physical buttons")
     b.add_argument("--disable", dest="enable", action="store_false",
                    help="set: measure/log only, do not fire")
+    b.add_argument("--combo", dest="combo", action="store_true", default=None,
+                   help="set: X+Y fires outer then inner")
+    b.add_argument("--no-combo", dest="combo", action="store_false",
+                   help="set: X+Y fires nothing (one button at a time)")
     b.set_defaults(func=cmd_buttons)
 
     sm = sub.add_parser("sample", help="operate on saved samples")

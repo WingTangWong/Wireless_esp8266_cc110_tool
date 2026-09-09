@@ -21,6 +21,7 @@ class _State:
         self.boot = time.time()
         self.gate_enabled = True
         self.btn_enabled = True
+        self.btn_combo = False
         self.btn_state = "none"
         self.btn_th = {"noneY": 640, "yX": 500, "xXy": 398, "floor": 150}
         self.btn_settle_ms = 140
@@ -176,7 +177,8 @@ def _handler(state):
                 return self._json({"ok": True, "enabled": state.gate_enabled})
             if p == "/api/buttons":
                 return self._json({
-                    "ok": True, "enabled": state.btn_enabled, "raw": 700, "smoothed": 700,
+                    "ok": True, "enabled": state.btn_enabled,
+                    "comboEnabled": state.btn_combo, "raw": 700, "smoothed": 700,
                     "state": state.btn_state, "x": state.btn_state in ("x", "xy"),
                     "y": state.btn_state in ("y", "xy"), "queueLen": 0,
                     "settleMs": state.btn_settle_ms, "thresholds": dict(state.btn_th),
@@ -188,12 +190,15 @@ def _handler(state):
             if p == "/api/buttons/config":
                 if "enabled" in q:
                     state.btn_enabled = q["enabled"] != "0"
+                if "combo" in q:
+                    state.btn_combo = q["combo"] != "0"
                 for k in ("noneY", "yX", "xXy", "floor"):
                     if k in q:
                         state.btn_th[k] = int(q[k])
                 if "settleMs" in q:
                     state.btn_settle_ms = int(q["settleMs"])
                 return self._json({"ok": True, "enabled": state.btn_enabled,
+                                   "comboEnabled": state.btn_combo,
                                    "thresholds": dict(state.btn_th),
                                    "settleMs": state.btn_settle_ms})
             if p == "/api/buttons/calibrate":

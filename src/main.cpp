@@ -358,7 +358,9 @@ struct ButtonConfigFile {
   char     magic[4];      // "BTNS"
   uint8_t  version;       // 1
   uint8_t  enabled;       // 0 = A0 buttons ignored (still measured/logged)
-  uint8_t  reserved0[2];
+  uint8_t  comboEnabled;  // 0 = X+Y fires nothing. Was reserved, so existing v1
+                          // files read back 0 - which is the intended default.
+  uint8_t  reserved0;
   uint16_t thNoneY;       // raw >= this            -> NONE
   uint16_t thYX;          // [thYX,    thNoneY)      -> Y
   uint16_t thXXy;         // [thXXy,   thYX)         -> X   ; [thFloor, thXXy) -> XY
@@ -370,6 +372,7 @@ struct ButtonConfigFile {
 
 struct ButtonConfig {
   bool     enabled  = true;
+  bool     comboEnabled = false;   // X+Y off: service one button at a time
   uint16_t thNoneY  = 640;
   uint16_t thYX     = 500;
   uint16_t thXXy    = 398;
@@ -956,7 +959,8 @@ static void buttonsLoadConfig() {
             memcmp(c.magic, "BTNS", 4) == 0 && c.version == 1;
   f.close();
   if(!ok) return;
-  btnCfg.enabled  = (c.enabled != 0);
+  btnCfg.enabled      = (c.enabled != 0);
+  btnCfg.comboEnabled = (c.comboEnabled != 0);
   btnCfg.thNoneY  = c.thNoneY;
   btnCfg.thYX     = c.thYX;
   btnCfg.thXXy    = c.thXXy;
@@ -970,6 +974,7 @@ static bool buttonsSaveConfig() {
   memcpy(c.magic, "BTNS", 4);
   c.version  = 1;
   c.enabled  = btnCfg.enabled ? 1 : 0;
+  c.comboEnabled = btnCfg.comboEnabled ? 1 : 0;
   c.thNoneY  = btnCfg.thNoneY;
   c.thYX     = btnCfg.thYX;
   c.thXXy    = btnCfg.thXXy;
@@ -1013,22 +1018,33 @@ static void btnEnqueueGate(const GateAssignment& a, const char* tag) {
   if(!gateEnqueueFire(a)) gateLastFireError = "gate fire queue full";
 }
 
-// A committed level change: fire the gate(s) whose button just became pressed.
+// A committed level change. One button is serviced at a time:
+//  - only a press that starts from fully released (NONE) fires, so contact
+//    chatter mid-hold (X <-> Y <-> X+Y, seen on the low-value ladder) can never
+//    actuate the other gate;
+//  - nothing is queued while a fire is already pending or the radio is busy;
+//  - X+Y is opt-in (btnCfg.comboEnabled) and off by default.
 static void btnApplyEdge(BtnState prev, BtnState now) {
-  const bool xPrev = (prev == BTN_X || prev == BTN_XY);
-  const bool yPrev = (prev == BTN_Y || prev == BTN_XY);
-  const bool xNow  = (now  == BTN_X || now  == BTN_XY);
-  const bool yNow  = (now  == BTN_Y || now  == BTN_XY);
-  const bool newX = xNow && !xPrev;
-  const bool newY = yNow && !yPrev;
+  if(prev != BTN_NONE || now == BTN_NONE) return;   // require a clean release first
 
-  if(newX && newY) {            // both pressed together -> outer, then inner
-    btnEnqueueGate(gateOuter, "y");
-    btnEnqueueGate(gateInner, "x");
-  } else if(newX) {
-    btnEnqueueGate(gateInner, "x");
-  } else if(newY) {
-    btnEnqueueGate(gateOuter, "y");
+  if(gateFireQueueLen || isBusy()) {
+    gateLastFireError = "button ignored: gate busy";
+    return;
+  }
+
+  switch(now) {
+    case BTN_X: btnEnqueueGate(gateInner, "x"); break;
+    case BTN_Y: btnEnqueueGate(gateOuter, "y"); break;
+    case BTN_XY:
+      if(btnCfg.comboEnabled) {          // both together -> outer, then inner
+        btnEnqueueGate(gateOuter, "y");
+        btnEnqueueGate(gateInner, "x");
+      } else {
+        gateLastFireError = "button: X+Y combo disabled";
+        DBG("A0 button: X+Y ignored (combo disabled)");
+      }
+      break;
+    default: break;
   }
 }
 
@@ -2203,6 +2219,7 @@ static void setupRoutes() {
     static const char* const NM[4] = {"none", "x", "y", "xy"};
     String s = "{\"ok\":true";
     s += ",\"enabled\":" + jsonBool(btnCfg.enabled);
+    s += ",\"comboEnabled\":" + jsonBool(btnCfg.comboEnabled);
     s += ",\"raw\":" + String(btnRaw);
     s += ",\"smoothed\":" + String(btnSmoothed);
     s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
@@ -2247,6 +2264,7 @@ static void setupRoutes() {
     ButtonConfig c = btnCfg;
     uint32_t v = 0;
     if(argU32("enabled", v))  c.enabled  = (v != 0);
+    if(argU32("combo", v))    c.comboEnabled = (v != 0);
     if(argU32("noneY", v))    c.thNoneY  = (uint16_t)v;
     if(argU32("yX", v))       c.thYX     = (uint16_t)v;
     if(argU32("xXy", v))      c.thXXy    = (uint16_t)v;
@@ -2256,6 +2274,7 @@ static void setupRoutes() {
     btnCfg = c;
     if(!buttonsSaveConfig()) return sendError("could not persist button config", 500);
     sendJson(String("{\"ok\":true,\"enabled\":") + jsonBool(btnCfg.enabled) +
+             ",\"comboEnabled\":" + jsonBool(btnCfg.comboEnabled) +
              ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
              ",\"yX\":" + String(btnCfg.thYX) +
              ",\"xXy\":" + String(btnCfg.thXXy) +
