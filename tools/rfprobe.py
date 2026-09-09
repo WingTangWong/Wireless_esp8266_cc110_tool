@@ -215,6 +215,57 @@ def cmd_fire(args):
     emit(args, d, f"fired {d.get('which')} gate: {d.get('sampleName')}")
 
 
+def cmd_buttons(args):
+    """A0 two-button ladder: live state + calibration (see BUTTONS.md)."""
+    if args.action == "calibrate":
+        if not args.state:
+            raise ApiError("buttons calibrate needs a state: none | x | y | xy")
+        d = api(args, "/api/buttons/calibrate", {"state": args.state}, method="POST")
+        return emit(args, d, f"captured {args.state} @ {d.get('captured')}  "
+                             f"ready={d.get('ready')}  thresholds={d.get('thresholds')}")
+    if args.action == "clear":
+        d = api(args, "/api/buttons/clear", method="POST")
+        return emit(args, d, "cleared observed ranges + calibration captures")
+    if args.action == "set":
+        params = {}
+        for arg_name, key in (("none_y", "noneY"), ("y_x", "yX"), ("x_xy", "xXy"),
+                              ("floor", "floor"), ("settle_ms", "settleMs")):
+            v = getattr(args, arg_name)
+            if v is not None:
+                params[key] = v
+        if args.enable is not None:
+            params["enabled"] = 1 if args.enable else 0
+        if args.combo is not None:
+            params["combo"] = 1 if args.combo else 0
+        if not params:
+            raise ApiError("buttons set needs at least one of --none-y/--y-x/--x-xy/"
+                           "--floor/--settle-ms/--enable/--disable/--combo/--no-combo")
+        d = api(args, "/api/buttons/config", params, method="POST")
+        return emit(args, d, f"saved: enabled={d.get('enabled')} combo={d.get('comboEnabled')} "
+                             f"thresholds={d.get('thresholds')} settleMs={d.get('settleMs')}")
+
+    d = api(args, "/api/buttons")
+    t = d.get("thresholds", {})
+    obs = d.get("observed", {})
+    lines = [
+        f"{'ENABLED' if d.get('enabled') else 'DISABLED'}  "
+        f"X+Y combo {'on' if d.get('comboEnabled') else 'off'}  state={d.get('state')}  "
+        f"raw={d.get('raw')} smoothed={d.get('smoothed')}  queue={d.get('queueLen')}",
+        f"  bands: none>={t.get('noneY')}  y>={t.get('yX')}  x>={t.get('xXy')}  "
+        f"xy>={t.get('floor')}   settleMs={d.get('settleMs')}",
+    ]
+    for st in ("none", "x", "y", "xy"):
+        r = obs.get(st, {})
+        lines.append(f"  observed {st:<4}: "
+                     + (f"{r.get('min')}..{r.get('max')}" if r.get("seen") else "(not seen yet)"))
+    ev = d.get("events", [])
+    if ev:
+        lines.append("  recent transitions (oldest first):")
+        for e in ev:
+            lines.append(f"    +{e.get('ms')} ms  {e.get('from')} -> {e.get('to')}  @ {e.get('smoothed')}")
+    emit(args, d, "\n".join(lines))
+
+
 def cmd_sample(args):
     if args.action == "list":
         return cmd_samples(args)
@@ -352,6 +403,26 @@ def build_parser():
     f = sub.add_parser("fire")
     f.add_argument("which", choices=("inner", "outer"))
     f.set_defaults(func=cmd_fire)
+
+    b = sub.add_parser("buttons", help="A0 two-button ladder: status / calibration")
+    b.add_argument("action", nargs="?", default="status",
+                   choices=("status", "calibrate", "clear", "set"))
+    b.add_argument("state", nargs="?", choices=("none", "x", "y", "xy"),
+                   help="calibrate: which combo is being physically held right now")
+    b.add_argument("--none-y", type=int, help="set: raw >= this -> NONE band")
+    b.add_argument("--y-x", type=int, help="set: raw >= this -> Y band")
+    b.add_argument("--x-xy", type=int, help="set: raw >= this -> X band")
+    b.add_argument("--floor", type=int, help="set: raw < this -> treat as released")
+    b.add_argument("--settle-ms", type=int, help="set: debounce settle window")
+    b.add_argument("--enable", dest="enable", action="store_true", default=None,
+                   help="set: act on the physical buttons")
+    b.add_argument("--disable", dest="enable", action="store_false",
+                   help="set: measure/log only, do not fire")
+    b.add_argument("--combo", dest="combo", action="store_true", default=None,
+                   help="set: X+Y fires outer then inner")
+    b.add_argument("--no-combo", dest="combo", action="store_false",
+                   help="set: X+Y fires nothing (one button at a time)")
+    b.set_defaults(func=cmd_buttons)
 
     sm = sub.add_parser("sample", help="operate on saved samples")
     sm.add_argument("action", choices=("list", "save", "load", "decode", "delete", "play"))

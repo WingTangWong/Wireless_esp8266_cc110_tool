@@ -87,6 +87,24 @@ def test_export_sub_and_csv(dev, tmp_path, capsys):
     assert csv.read_text().splitlines()[0] == "duration_us,level"
 
 
+def test_buttons_status_set_and_calibrate(dev, capsys):
+    run(dev, "buttons")
+    out = capsys.readouterr().out
+    assert "state=none" in out and "bands:" in out
+    run(dev, "buttons", "set", "--none-y", "660", "--disable")
+    out = capsys.readouterr().out
+    assert "noneY" in out and "enabled=False" in out
+    run(dev, "buttons", "calibrate", "x")
+    assert "captured x" in capsys.readouterr().out
+    run(dev, "buttons", "clear")
+    assert "cleared" in capsys.readouterr().out
+
+
+def test_buttons_set_needs_a_field(dev):
+    with pytest.raises(SystemExit):
+        run(dev, "buttons", "set")
+
+
 def test_unreachable_host_exits_2():
     with pytest.raises(SystemExit) as e:
         rfprobe.main(["--host", "127.0.0.1:1", "--timeout", "1", "status"])

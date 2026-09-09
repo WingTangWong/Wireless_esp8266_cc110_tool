@@ -18,7 +18,14 @@ class _State:
         self.pulses = 0
         self.sweep = []
         self.samples = {"sample01": (318_000_000, 50, 120_000)}
+        self.boot = time.time()
         self.gate_enabled = True
+        self.btn_enabled = True
+        self.btn_combo = False
+        self.btn_state = "none"
+        self.btn_th = {"noneY": 640, "yX": 500, "xXy": 398, "floor": 150}
+        self.btn_settle_ms = 140
+        self.btn_cal = {"none": None, "x": None, "y": None, "xy": None}
 
     @property
     def busy(self):
@@ -78,6 +85,12 @@ def _handler(state):
                     "captureTruncated": False, "maxPulses": 3072,
                     "sweepDone": bool(state.sweep) and not state.busy,
                     "sweepCount": len(state.sweep), "busy": state.busy,
+                    "uptimeMs": int((time.time() - state.boot) * 1000),
+                    "resetReason": "External System",
+                    "buttons": {"raw": 700, "smoothed": 700, "state": state.btn_state,
+                                "x": state.btn_state in ("x", "xy"),
+                                "y": state.btn_state in ("y", "xy"),
+                                "enabled": state.btn_enabled},
                 })
             if p == "/api/tune":
                 hz = int(q.get("hz", 0))
@@ -162,6 +175,43 @@ def _handler(state):
             if p == "/api/gate/enable":
                 state.gate_enabled = q.get("on", "1") != "0"
                 return self._json({"ok": True, "enabled": state.gate_enabled})
+            if p == "/api/buttons":
+                return self._json({
+                    "ok": True, "enabled": state.btn_enabled,
+                    "comboEnabled": state.btn_combo, "raw": 700, "smoothed": 700,
+                    "state": state.btn_state, "x": state.btn_state in ("x", "xy"),
+                    "y": state.btn_state in ("y", "xy"), "queueLen": 0,
+                    "settleMs": state.btn_settle_ms, "thresholds": dict(state.btn_th),
+                    "observed": {k: {"seen": False, "min": 0, "max": 0}
+                                 for k in ("none", "x", "y", "xy")},
+                    "calibration": dict(state.btn_cal),
+                    "events": [],
+                })
+            if p == "/api/buttons/config":
+                if "enabled" in q:
+                    state.btn_enabled = q["enabled"] != "0"
+                if "combo" in q:
+                    state.btn_combo = q["combo"] != "0"
+                for k in ("noneY", "yX", "xXy", "floor"):
+                    if k in q:
+                        state.btn_th[k] = int(q[k])
+                if "settleMs" in q:
+                    state.btn_settle_ms = int(q["settleMs"])
+                return self._json({"ok": True, "enabled": state.btn_enabled,
+                                   "comboEnabled": state.btn_combo,
+                                   "thresholds": dict(state.btn_th),
+                                   "settleMs": state.btn_settle_ms})
+            if p == "/api/buttons/calibrate":
+                st = q.get("state", "")
+                if st not in state.btn_cal:
+                    return self._json({"ok": False, "error": "bad state"}, 400)
+                state.btn_cal[st] = 700
+                ready = all(v is not None for v in state.btn_cal.values())
+                return self._json({"ok": True, "state": st, "captured": 700,
+                                   "ready": ready, "thresholds": dict(state.btn_th)})
+            if p == "/api/buttons/clear":
+                state.btn_cal = {k: None for k in state.btn_cal}
+                return self._json({"ok": True})
             return self._json({"ok": False, "error": "not found"}, 404)
 
     return H

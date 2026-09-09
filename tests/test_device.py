@@ -33,7 +33,7 @@ STATUS_FIELDS = {
     "frequencyHz": (int,), "bandwidthKhz": (int,), "heap": (int,),
     "fsUsedBytes": (int,), "fsTotalBytes": (int,), "pulses": (int,),
     "captureDone": bool, "captureTruncated": bool, "maxPulses": (int,),
-    "sweepDone": bool, "busy": bool,
+    "sweepDone": bool, "busy": bool, "uptimeMs": (int,), "resetReason": str,
 }
 
 
@@ -163,3 +163,44 @@ def test_gate_status_schema(api):
         assert set(a) >= {"assigned", "sampleName", "sampleExists", "frequencyHz",
                           "bandwidthKhz", "repeats", "invert", "ready"}
         assert isinstance(a["assigned"], bool)
+
+
+# --- /api/buttons (A0 two-button ladder addon, BUTTONS.md) ------------
+
+_BTN_STATES = ("none", "x", "y", "xy")
+
+
+def test_buttons_status_schema(api):
+    d = api("/api/buttons")
+    assert d["state"] in _BTN_STATES
+    assert isinstance(d["enabled"], bool)
+    assert isinstance(d["x"], bool) and isinstance(d["y"], bool)
+    assert 0 <= d["raw"] <= 1023 and 0 <= d["smoothed"] <= 1023
+    t = d["thresholds"]
+    assert t["floor"] < t["xXy"] < t["yX"] < t["noneY"] <= 1023
+    for st in _BTN_STATES:
+        o = d["observed"][st]
+        assert set(o) >= {"seen", "min", "max"}
+    assert isinstance(d["events"], list)
+
+
+def test_status_reports_button_state(api):
+    b = api("/api/status")["buttons"]
+    assert b["state"] in _BTN_STATES
+    assert set(b) >= {"raw", "smoothed", "state", "x", "y", "enabled"}
+
+
+def test_buttons_config_round_trips(api):
+    orig = api("/api/buttons")["thresholds"]
+    try:
+        api("/api/buttons/config", {"noneY": orig["noneY"] - 5}, method="POST")
+        assert api("/api/buttons")["thresholds"]["noneY"] == orig["noneY"] - 5
+    finally:
+        api("/api/buttons/config", {"noneY": orig["noneY"]}, method="POST")
+
+
+def test_buttons_calibrate_captures_a_level(api):
+    d = api("/api/buttons/calibrate", {"state": "none"}, method="POST")
+    assert 0 <= d["captured"] <= 1023
+    assert isinstance(d["ready"], bool)
+    assert api("/api/buttons")["calibration"]["none"] == d["captured"]

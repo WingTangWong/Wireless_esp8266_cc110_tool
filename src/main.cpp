@@ -17,12 +17,11 @@
     GND   -> GND
 
   Web UI / Wi-Fi
-    Concurrent AP + station (WIFI_AP_STA).
-    - Joins the configured home network, then browse to http://cc1101.local/
-      or the router-assigned DHCP address.
-    - Always hosts its own SoftAP (SSID <ap_ssid>-<chip id>) with a captive
-      portal so a phone connects directly and reaches http://192.168.4.1/
-      with no shared network.
+    Station-only by default (WIFI_STA): joins the configured home network, then
+    browse to http://cc1101.local/ or the router-assigned DHCP address. If the
+    network is out of range it just keeps retrying - there is no AP fallback.
+    Build with -DCFG_WIFI_SERVE_AP=1 to also host a SoftAP (SSID
+    <ap_ssid>-<chip id>) + captive portal on http://192.168.4.1/.
     Credentials come from secrets.ini (git-ignored) via the CFG_WIFI_* build
     defines; copy secrets.ini.example to get started.
 
@@ -99,16 +98,17 @@ static constexpr uint8_t PIN_CC1101_GDO0 = D2;  // module pin 3: async TX data i
 static constexpr uint8_t PIN_CC1101_GDO2 = D1;  // module pin 8: async RX data output
 
 // -----------------------------------------------------------------------------
-// Wi-Fi settings (concurrent AP + station)
+// Wi-Fi settings
 // -----------------------------------------------------------------------------
-// The device always runs its own SoftAP so a phone can connect directly to the
-// dashboard, and at the same time keeps trying to join the configured home
-// network. The same web server answers on both interfaces.
+// Station-only by default: the device joins the configured home network and
+// keeps retrying if it drops. The SoftAP + captive portal is opt-in
+// (-DCFG_WIFI_SERVE_AP=1) - it adds RF/CPU load that is best avoided on a
+// marginal supply.
 //
 // Credentials are NOT stored here. They come from secrets.ini (git-ignored) via
 // the CFG_WIFI_* compile-time defines in platformio.ini. The placeholders below
-// only apply when nothing overrode them, in which case the station join fails
-// and only the SoftAP comes up. See secrets.ini.example.
+// only apply when nothing overrode them, in which case the station join simply
+// keeps failing. See secrets.ini.example.
 #ifndef CFG_WIFI_SSID
 #define CFG_WIFI_SSID "CHANGE_ME_SSID"
 #endif
@@ -121,6 +121,14 @@ static constexpr uint8_t PIN_CC1101_GDO2 = D1;  // module pin 8: async RX data o
 #ifndef CFG_WIFI_AP_PASS
 #define CFG_WIFI_AP_PASS "CHANGE_ME_AP_PASSWORD"
 #endif
+
+// SoftAP serving is opt-in. Default: station-only - join the configured network
+// if it is in range, otherwise keep retrying (no AP fallback, no captive portal).
+// Build with -DCFG_WIFI_SERVE_AP=1 to also bring up the SoftAP + captive portal.
+#ifndef CFG_WIFI_SERVE_AP
+#define CFG_WIFI_SERVE_AP 0
+#endif
+static constexpr bool WIFI_SERVE_AP = (CFG_WIFI_SERVE_AP != 0);
 
 // Station: the 2.4 GHz Wi-Fi network the D1 Mini should join.
 static constexpr char WIFI_SSID[] = CFG_WIFI_SSID;
@@ -229,6 +237,8 @@ uint32_t sweepStepHz = DEFAULT_SWEEP_STEP_HZ;
 uint32_t sweepCurrentHz = DEFAULT_SWEEP_START_HZ;
 uint16_t sweepDwellMs = DEFAULT_SWEEP_DWELL_MS;
 uint16_t sweepBandwidthKhz = DEFAULT_SWEEP_BW_KHZ;
+bool     sweepStepArmed = false;      // radio tuned + in RX, waiting out the dwell
+uint32_t sweepStepStartedMs = 0;      // non-blocking dwell timer
 
 // -----------------------------------------------------------------------------
 // Radio/application state
@@ -301,8 +311,111 @@ GateAssignment gateOuter{};
 bool gateEnabled = true;
 String gateLastFireError;   // set async by fireGate(); surfaced on /api/gate
 
-bool gateFireRequested = false;
-GateAssignment gateFirePlan{};
+// Gate fires are queued (FIFO) and drained from loop() when the radio is free.
+// A single slot is enough for the web button; the A0 two-button addon can enqueue
+// two at once ("both pressed" -> outer then inner).
+static constexpr uint8_t GATE_FIRE_QUEUE_MAX = 3;
+GateAssignment gateFireQueue[GATE_FIRE_QUEUE_MAX];
+uint8_t        gateFireQueueLen = 0;
+
+static bool gateEnqueueFire(const GateAssignment& a) {
+  if(gateFireQueueLen >= GATE_FIRE_QUEUE_MAX) return false;
+  gateFireQueue[gateFireQueueLen++] = a;
+  return true;
+}
+
+// -----------------------------------------------------------------------------
+// A0 two-button addon (see BUTTONS.md)
+// -----------------------------------------------------------------------------
+// Every GPIO is taken by the CC1101, so two momentary buttons are encoded on the
+// single ADC pin as four voltage levels via a resistor ladder:
+//   none  ~700   Y only ~575   X only ~420   X+Y ~370   (raw counts, 0..1023)
+// Real levels depend on resistor tolerance + ADC nonlinearity, so the firmware
+// measures and logs where A0 settles (serial + the /api/buttons event ring), and
+// thresholds are calibrated from those readings. Config persists to /buttons.bin.
+//   X -> fire button 1 (inner) ; Y -> fire button 2 (outer)
+//   both pressed together -> fire outer, then inner (once the radio is free)
+// The physical buttons bypass gateEnabled ("buttons always work") but honour
+// their own btnCfg.enabled flag.
+static constexpr uint8_t  PIN_BTN_ADC   = A0;
+static constexpr uint32_t BTN_SAMPLE_MS = 25;    // A0 poll cadence (keep modest: analogRead can stall Wi-Fi)
+static constexpr char     BTN_CONFIG_PATH[] = "/buttons.bin";
+static constexpr uint8_t  BTN_EVENT_LOG_MAX = 24;
+
+enum BtnState : uint8_t { BTN_NONE = 0, BTN_X = 1, BTN_Y = 2, BTN_XY = 3 };
+
+static const char* btnStateName(BtnState s) {
+  switch(s) {
+    case BTN_X:  return "x";
+    case BTN_Y:  return "y";
+    case BTN_XY: return "xy";
+    default:     return "none";
+  }
+}
+
+#pragma pack(push, 1)
+struct ButtonConfigFile {
+  char     magic[4];      // "BTNS"
+  uint8_t  version;       // 1
+  uint8_t  enabled;       // 0 = A0 buttons ignored (still measured/logged)
+  uint8_t  comboEnabled;  // 0 = X+Y fires nothing. Was reserved, so existing v1
+                          // files read back 0 - which is the intended default.
+  uint8_t  reserved0;
+  uint16_t thNoneY;       // raw >= this            -> NONE
+  uint16_t thYX;          // [thYX,    thNoneY)      -> Y
+  uint16_t thXXy;         // [thXXy,   thYX)         -> X   ; [thFloor, thXXy) -> XY
+  uint16_t thFloor;       // raw < this             -> NONE (open / short)
+  uint16_t settleMs;      // a level must hold this long before it acts
+  uint16_t reserved1;
+};
+#pragma pack(pop)
+
+// Defaults measured on the built hardware (220R ladder), settled values:
+//   none 717..736   Y 603   X 400..447   X+Y 385
+// Boundaries sit between those, biased so an ambiguous reading falls to the
+// *safer* side - a missed press is an annoyance, a false one actuates a gate:
+//   thNoneY 640  none has 77 counts of headroom, Y has 37
+//   thYX    500  Y has 103, X has 97
+//   thXXy   200  X+Y is folded into X. Those two bands are only ~17 counts
+//                apart on this ladder, so they cannot be told apart reliably;
+//                since comboEnabled is off the X+Y band has no job, and
+//                collapsing it means a drifting X press still fires inner
+//                instead of silently doing nothing. Raise this (and set
+//                comboEnabled) only if the ladder is rebuilt with values that
+//                actually separate X from X+Y.
+struct ButtonConfig {
+  bool     enabled  = true;
+  bool     comboEnabled = false;   // X+Y off: service one button at a time
+  uint16_t thNoneY  = 640;
+  uint16_t thYX     = 500;
+  uint16_t thXXy    = 200;
+  uint16_t thFloor  = 150;
+  uint16_t settleMs = 140;
+};
+ButtonConfig btnCfg;
+
+// Live sampling state
+uint16_t  btnRaw = 0;            // last single analogRead
+uint16_t  btnSmoothed = 0;       // EMA of the averaged reads
+BtnState  btnState = BTN_NONE;   // committed (debounced) level
+BtnState  btnCandidate = BTN_NONE;
+uint32_t  btnCandidateSinceMs = 0;
+uint32_t  btnLastSampleMs = 0;
+
+// Calibration aid: where each level actually settles, observed since boot / clear
+uint16_t  btnObsMin[4]  = {1023, 1023, 1023, 1023};
+uint16_t  btnObsMax[4]  = {0, 0, 0, 0};
+bool      btnObsSeen[4] = {false, false, false, false};
+
+// Ring log of settle transitions, readable over HTTP so calibration needs no cable
+struct BtnEvent { uint32_t ms; uint8_t from; uint8_t to; uint16_t smoothed; };
+BtnEvent  btnEventLog[BTN_EVENT_LOG_MAX];
+uint8_t   btnEventHead = 0;      // next write slot
+uint8_t   btnEventCount = 0;
+
+// Calibration captures (one smoothed reading per level; midpoints -> thresholds)
+uint16_t  btnCalCentre[4] = {0, 0, 0, 0};
+bool      btnCalHave[4]   = {false, false, false, false};
 
 // -----------------------------------------------------------------------------
 // Utility
@@ -403,6 +516,15 @@ static bool argI32(const char* name, int32_t& out) {
 
 static bool isBusy() {
   return captureActive || sweepActive || currentMode == "playback";
+}
+
+// Keep the watchdog + SDK background tasks fed inside a long radio loop without
+// the ~1 ms scheduler hand-off that delay(1)/yield() to the CONT stack can add.
+// The soft WDT can't be widened on the ESP8266 (see setup()), so the rule is:
+// call this at least every ~1 s inside any send/scan loop, and bound the loop.
+static inline void radioServiceWdt() {
+  ESP.wdtFeed();
+  optimistic_yield(1000);   // run SDK/WiFi work only if it has been >1 ms
 }
 
 static void writeGdoFast(uint8_t level) {
@@ -674,6 +796,10 @@ static void replayCurrent(uint8_t repeats, bool invert) {
 
   repeats = constrain(repeats, (uint8_t)1, (uint8_t)10);
 
+  // Bound the per-burst wait: the frame's own airtime + generous slack. If the
+  // Timer1 ISR ever stops advancing we bail instead of spinning forever.
+  const uint32_t burstBudgetMs = (captureDurationUs / 1000UL) + 750UL;
+
   for(uint8_t rep = 0; rep < repeats; ++rep) {
     txIndex = 0;
     txCount = pulseCount;
@@ -695,13 +821,23 @@ static void replayCurrent(uint8_t repeats, bool invert) {
     if(firstUs > 1600000UL) firstUs = 1600000UL;
     timer1_write(firstUs * 5U);
 
-    while(!txDone) delay(0);
+    const uint32_t deadline = millis() + burstBudgetMs;
+    while(!txDone) {
+      radioServiceWdt();
+      if((int32_t)(millis() - deadline) >= 0) {   // ISR stalled - abort this burst
+        DBG("replay burst %u timed out after %lu ms", rep, burstBudgetMs);
+        break;
+      }
+    }
 
     timer1_disable();
     timer1_detachInterrupt();
     writeGdoFast(LOW);
 
-    if(rep + 1 < repeats) delay(20);
+    if(rep + 1 < repeats) {                        // inter-burst gap, WDT kept fed
+      const uint32_t gapEnd = millis() + 20;
+      while((int32_t)(millis() - gapEnd) < 0) radioServiceWdt();
+    }
   }
 
   radio.setSidle();
@@ -811,6 +947,163 @@ static String gateAssignmentJson(const GateAssignment& a) {
   s += ",\"ready\":" + jsonBool(gateAssignmentValid(a) && gateSampleExists(a));
   s += "}";
   return s;
+}
+
+// -----------------------------------------------------------------------------
+// A0 two-button addon: config, sampling, debounce, fire mapping
+// -----------------------------------------------------------------------------
+static void buttonsNormalize(ButtonConfig& c) {
+  if(c.thNoneY > 1023) c.thNoneY = 1023;
+  if(c.thNoneY < 4)    c.thNoneY = 4;
+  if(c.thYX    >= c.thNoneY) c.thYX = c.thNoneY - 1;
+  if(c.thYX    < 3)    c.thYX = 3;
+  if(c.thXXy   >= c.thYX)    c.thXXy = c.thYX - 1;
+  if(c.thXXy   < 2)    c.thXXy = 2;
+  if(c.thFloor >= c.thXXy)   c.thFloor = c.thXXy - 1;
+  c.settleMs = constrain(c.settleMs, (uint16_t)20, (uint16_t)2000);
+}
+
+static void buttonsLoadConfig() {
+  btnCfg = ButtonConfig{};
+  File f = LittleFS.open(BTN_CONFIG_PATH, "r");
+  if(!f) return;
+  ButtonConfigFile c{};
+  bool ok = f.read((uint8_t*)&c, sizeof(c)) == (int)sizeof(c) &&
+            memcmp(c.magic, "BTNS", 4) == 0 && c.version == 1;
+  f.close();
+  if(!ok) return;
+  btnCfg.enabled      = (c.enabled != 0);
+  btnCfg.comboEnabled = (c.comboEnabled != 0);
+  btnCfg.thNoneY  = c.thNoneY;
+  btnCfg.thYX     = c.thYX;
+  btnCfg.thXXy    = c.thXXy;
+  btnCfg.thFloor  = c.thFloor;
+  btnCfg.settleMs = c.settleMs;
+  buttonsNormalize(btnCfg);
+}
+
+static bool buttonsSaveConfig() {
+  ButtonConfigFile c{};
+  memcpy(c.magic, "BTNS", 4);
+  c.version  = 1;
+  c.enabled  = btnCfg.enabled ? 1 : 0;
+  c.comboEnabled = btnCfg.comboEnabled ? 1 : 0;
+  c.thNoneY  = btnCfg.thNoneY;
+  c.thYX     = btnCfg.thYX;
+  c.thXXy    = btnCfg.thXXy;
+  c.thFloor  = btnCfg.thFloor;
+  c.settleMs = btnCfg.settleMs;
+  File f = LittleFS.open(BTN_CONFIG_PATH, "w");
+  if(!f) return false;
+  bool ok = f.write((uint8_t*)&c, sizeof(c)) == (int)sizeof(c);
+  f.close();
+  return ok;
+}
+
+static BtnState btnClassify(uint16_t raw) {
+  if(raw >= btnCfg.thNoneY) return BTN_NONE;
+  if(raw >= btnCfg.thYX)    return BTN_Y;
+  if(raw >= btnCfg.thXXy)   return BTN_X;
+  if(raw >= btnCfg.thFloor) return BTN_XY;
+  return BTN_NONE;   // below the floor: pin floating / shorted -> treat as released
+}
+
+static void btnLogEvent(BtnState from, BtnState to, uint16_t smoothed) {
+  BtnEvent& e = btnEventLog[btnEventHead];
+  e.ms = millis();
+  e.from = from;
+  e.to = to;
+  e.smoothed = smoothed;
+  btnEventHead = (btnEventHead + 1) % BTN_EVENT_LOG_MAX;
+  if(btnEventCount < BTN_EVENT_LOG_MAX) ++btnEventCount;
+  DBG("A0 button: %s -> %s @ raw~%u  (bands none>=%u y>=%u x>=%u xy>=%u)",
+      btnStateName(from), btnStateName(to), smoothed,
+      btnCfg.thNoneY, btnCfg.thYX, btnCfg.thXXy, btnCfg.thFloor);
+}
+
+// Enqueue one gate fire if it is assigned + ready; otherwise record why.
+static void btnEnqueueGate(const GateAssignment& a, const char* tag) {
+  if(a.sampleName[0] == '\0' || !gateAssignmentValid(a) || !gateSampleExists(a)) {
+    gateLastFireError = String("button ") + tag + ": gate not ready";
+    DBG("A0 button %s: gate not ready", tag);
+    return;
+  }
+  if(!gateEnqueueFire(a)) gateLastFireError = "gate fire queue full";
+}
+
+// A committed level change. One button is serviced at a time:
+//  - only a press that starts from fully released (NONE) fires, so contact
+//    chatter mid-hold (X <-> Y <-> X+Y, seen on the low-value ladder) can never
+//    actuate the other gate;
+//  - nothing is queued while a fire is already pending or the radio is busy;
+//  - X+Y is opt-in (btnCfg.comboEnabled) and off by default.
+static void btnApplyEdge(BtnState prev, BtnState now) {
+  if(prev != BTN_NONE || now == BTN_NONE) return;   // require a clean release first
+
+  if(gateFireQueueLen || isBusy()) {
+    gateLastFireError = "button ignored: gate busy";
+    return;
+  }
+
+  switch(now) {
+    case BTN_X: btnEnqueueGate(gateInner, "x"); break;
+    case BTN_Y: btnEnqueueGate(gateOuter, "y"); break;
+    case BTN_XY:
+      if(btnCfg.comboEnabled) {          // both together -> outer, then inner
+        btnEnqueueGate(gateOuter, "y");
+        btnEnqueueGate(gateInner, "x");
+      } else {
+        gateLastFireError = "button: X+Y combo disabled";
+        DBG("A0 button: X+Y ignored (combo disabled)");
+      }
+      break;
+    default: break;
+  }
+}
+
+static void serviceButtons() {
+  const uint32_t now = millis();
+  if(now - btnLastSampleMs < BTN_SAMPLE_MS) return;
+  btnLastSampleMs = now;
+
+  uint32_t acc = 0;
+  for(uint8_t i = 0; i < 3; ++i) acc += analogRead(PIN_BTN_ADC);
+  btnRaw = (uint16_t)(acc / 3);
+  btnSmoothed = btnSmoothed ? (uint16_t)((btnSmoothed * 3 + btnRaw) / 4) : btnRaw;
+
+  const BtnState cls = btnClassify(btnSmoothed);
+
+  btnObsSeen[cls] = true;
+  if(btnSmoothed < btnObsMin[cls]) btnObsMin[cls] = btnSmoothed;
+  if(btnSmoothed > btnObsMax[cls]) btnObsMax[cls] = btnSmoothed;
+
+  if(cls != btnCandidate) {            // level moved: (re)start the settle timer
+    btnCandidate = cls;
+    btnCandidateSinceMs = now;
+    return;
+  }
+  if(cls == btnState) return;                          // already committed
+  if(now - btnCandidateSinceMs < btnCfg.settleMs) return;   // not settled yet
+
+  const BtnState prev = btnState;
+  btnState = cls;
+  btnLogEvent(prev, btnState, btnSmoothed);
+  if(btnCfg.enabled) btnApplyEdge(prev, btnState);
+}
+
+// Recompute thresholds from whatever calibration captures we have. With all four
+// levels captured the boundaries are the midpoints; the floor sits a margin below
+// the lowest (X+Y) level.
+static void btnRecomputeThresholds() {
+  if(!(btnCalHave[BTN_NONE] && btnCalHave[BTN_Y] &&
+       btnCalHave[BTN_X] && btnCalHave[BTN_XY])) return;
+  ButtonConfig c = btnCfg;
+  c.thNoneY = (btnCalCentre[BTN_NONE] + btnCalCentre[BTN_Y]) / 2;
+  c.thYX    = (btnCalCentre[BTN_Y]    + btnCalCentre[BTN_X]) / 2;
+  c.thXXy   = (btnCalCentre[BTN_X]    + btnCalCentre[BTN_XY]) / 2;
+  c.thFloor = (btnCalCentre[BTN_XY] > 60) ? (btnCalCentre[BTN_XY] - 60) : 0;
+  buttonsNormalize(c);
+  btnCfg = c;
 }
 
 // -----------------------------------------------------------------------------
@@ -952,26 +1245,38 @@ static void startSweep(uint32_t startHz, uint32_t stopHz, uint32_t stepHz,
   sweepCount = 0;
   sweepDone = false;
   sweepActive = true;
+  sweepStepArmed = false;
   currentMode = "sweeping";
   configureAnalyzer(sweepBandwidthKhz);
 }
 
+// Cooperative: one step is "tune + arm RX" on the first call, then "read RSSI"
+// once the dwell has elapsed. No blocking delay - loop() runs freely between,
+// so HTTP stays responsive and the watchdog is never starved during a scan.
 static void serviceSweep() {
   if(!sweepActive) return;
 
   if(sweepCurrentHz > sweepStopHz || sweepCount >= MAX_SWEEP_POINTS) {
     sweepActive = false;
     sweepDone = true;
+    sweepStepArmed = false;
     currentMode = "idle";
     restoreTargetRx();
     return;
   }
 
-  setRadioFrequency(sweepCurrentHz);
-  radio.SetRx();
-  delay(sweepDwellMs);
+  if(!sweepStepArmed) {
+    setRadioFrequency(sweepCurrentHz);
+    radio.SetRx();
+    sweepStepStartedMs = millis();
+    sweepStepArmed = true;
+    return;                                  // wait out the dwell in later loops
+  }
+  if((int32_t)(millis() - sweepStepStartedMs) < (int32_t)sweepDwellMs) return;
+
   int rssi = radio.getRssi();
   radio.setSidle();
+  sweepStepArmed = false;
 
   sweepHz[sweepCount] = sweepCurrentHz;
   sweepRssi[sweepCount] = (int16_t)rssi;
@@ -1016,7 +1321,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px;borde
 <body>
 <h1>CC1101 318 MHz Multifunction</h1>
 <p class="sub">WeMOS D1 Mini + SmartRC CC1101 3.0.2 &nbsp;·&nbsp; <a href="/gate" style="color:#6aa8ff">Gate control</a></p>
-<div class="row"><span id="radio" class="badge">radio…</span><span id="mode" class="badge">idle</span><span id="wifi" class="badge">Wi-Fi…</span><span id="ap" class="badge">AP…</span><span id="heap" class="muted"></span></div>
+<div class="row"><span id="radio" class="badge">radio…</span><span id="mode" class="badge">idle</span><span id="btns" class="badge">buttons…</span><span id="wifi" class="badge">Wi-Fi…</span><span id="ap" class="badge">AP…</span><span id="heap" class="muted"></span></div>
 <div class="row"><button class="tiny" onclick="selftest()">Self-test</button><span id="fwinfo" class="muted"></span><span id="selftest" class="muted"></span></div>
 
 <div class="grid">
@@ -1150,6 +1455,12 @@ async function status(){
   let x=await j('/api/status');
   $('radio').textContent=x.radio?'CC1101 OK':'CC1101 ?';
   $('mode').textContent=x.mode;
+  if(x.buttons){let b=x.buttons,l='buttons idle';
+   if(!b.enabled)l='buttons off';
+   else if(b.state==='x')l='BUTTON X';
+   else if(b.state==='y')l='BUTTON Y';
+   else if(b.state==='xy')l='BUTTON X+Y';
+   $('btns').textContent=l+' ('+b.smoothed+')';}
   $('wifi').textContent=x.wifiConnected?(x.wifiSsid+' · '+x.wifiIp+' · '+x.wifiRssi+' dBm'):'Wi-Fi reconnecting…';
   $('wifi').title=x.hostname||'';
   $('ap').textContent=x.apActive?('AP '+x.apSsid+' · '+x.apIp+' · '+x.apClients+' client'+(x.apClients==1?'':'s')):'AP down';
@@ -1251,7 +1562,8 @@ static const char GATE_PAGE[] PROGMEM = R"HTML(
 body{max-width:560px;margin:auto;padding:18px}
 h1{margin:0 0 2px}.sub{color:#9aa0a6;margin:0 0 16px;font-size:13px}
 button.gate{width:100%;font-size:24px;font-weight:700;padding:34px 12px;margin:10px 0;border-radius:16px;background:#1c2733;color:#eee;border:2px solid #3f6b9e;cursor:pointer}
-button.gate:active{background:#24445f}
+button.gate:active,button.gate.pressed{background:#24445f}
+button.gate.pressed{border-color:#e0a94a}
 button.gate:disabled{opacity:.45;cursor:not-allowed}
 .name{display:block;font-size:13px;font-weight:400;color:#9fb6cf;margin-top:6px}
 #toast{min-height:22px;margin-top:8px;font-size:14px}
@@ -1269,11 +1581,14 @@ const $=i=>document.getElementById(i);
 let busy=false;
 async function load(){
  try{let r=await fetch('/api/gate',{cache:'no-store'});let g=await r.json();
+  let bs=(g.buttons&&g.buttons.state)||'none';
   for(let w of ['inner','outer']){let a=g[w];
    $('n-'+w).textContent=a.assigned?(a.sampleName+(a.ready?'':' — unavailable')):'unassigned';
-   $('b-'+w).disabled=busy||!a.ready||!g.enabled;}
+   $('b-'+w).disabled=busy||!a.ready||!g.enabled;
+   $('b-'+w).classList.toggle('pressed',(w==='inner'?(bs==='x'||bs==='xy'):(bs==='y'||bs==='xy')));}
   if(!g.enabled&&!busy)$('toast').textContent='Gate control is disabled (re-enable on the assignment page)';
   else if(g.lastFireError&&!busy)$('toast').textContent='Last fire failed: '+g.lastFireError;
+  else if(!busy&&bs!=='none')$('toast').textContent='Physical button: '+bs.toUpperCase().replace('XY','X+Y');
  }catch(e){$('toast').textContent='status error';}
 }
 async function fire(w){
@@ -1284,7 +1599,7 @@ async function fire(w){
  catch(e){$('toast').textContent='Error: '+e.message;}
  busy=false;load();
 }
-load();setInterval(load,4000);
+load();setInterval(load,1200);
 </script></body></html>
 )HTML";
 
@@ -1389,6 +1704,7 @@ static void startMdnsIfNeeded() {
 }
 
 static void startWifiAp() {
+  if(!WIFI_SERVE_AP) return;   // station-only build
   if(!apSsidEffective.length()) {
     // Per-device suffix so two units nearby don't share an SSID.
     apSsidEffective = String(WIFI_AP_SSID) + "-" + String(ESP.getChipId(), HEX);
@@ -1411,12 +1727,12 @@ static void startWifiAp() {
 
 static void startWifi() {
   WiFi.persistent(false);
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_SERVE_AP ? WIFI_AP_STA : WIFI_STA);
   WiFi.hostname(WIFI_HOSTNAME);
   WiFi.setAutoReconnect(true);
 
-  // Bring the SoftAP up first so the dashboard is reachable even if the home
-  // network is out of range or misconfigured.
+  // SoftAP first (if enabled) so the dashboard is reachable even when the home
+  // network is out of range. Station-only builds just keep retrying the join.
   startWifiAp();
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -1425,18 +1741,20 @@ static void startWifi() {
   while(WiFi.status() != WL_CONNECTED &&
         (uint32_t)(millis() - started) < WIFI_CONNECT_TIMEOUT_MS) {
     delay(50);
-    yield();
+    ESP.wdtFeed();
   }
 
   startMdnsIfNeeded();
 }
 
 static void serviceWifi() {
-  // Keep the SoftAP alive regardless of station state.
-  if(!apActive || (WiFi.getMode() & WIFI_AP) == 0) {
-    startWifiAp();
+  if(WIFI_SERVE_AP) {
+    // Keep the SoftAP alive regardless of station state.
+    if(!apActive || (WiFi.getMode() & WIFI_AP) == 0) {
+      startWifiAp();
+    }
+    dnsServer.processNextRequest();
   }
-  dnsServer.processNextRequest();
 
   if(WiFi.status() == WL_CONNECTED) {
     startMdnsIfNeeded();
@@ -1519,6 +1837,14 @@ static void setupRoutes() {
     s += ",\"sweepDone\":" + jsonBool(sweepDone);
     s += ",\"sweepCount\":" + String(sweepCount);
     s += ",\"busy\":" + jsonBool(isBusy());
+    s += ",\"uptimeMs\":" + String(millis());
+    s += ",\"resetReason\":\"" + jsonEscape(ESP.getResetReason()) + "\"";
+    s += ",\"buttons\":{\"raw\":" + String(btnRaw);
+    s += ",\"smoothed\":" + String(btnSmoothed);
+    s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
+    s += ",\"x\":" + jsonBool(btnState == BTN_X || btnState == BTN_XY);
+    s += ",\"y\":" + jsonBool(btnState == BTN_Y || btnState == BTN_XY);
+    s += ",\"enabled\":" + jsonBool(btnCfg.enabled) + "}";
     s += "}";
     sendJson(s);
   });
@@ -1705,7 +2031,7 @@ static void setupRoutes() {
     for(uint16_t i = 0; i < pulseCount; ++i) {
       if(i) s += ',';
       s += '[' + String(pulseDurations[i]) + ',' + String(pulseLevels[i]) + ']';
-      if(s.length() > 1024) { server.sendContent(s); s = ""; }
+      if(s.length() > 1024) { server.sendContent(s); s = ""; radioServiceWdt(); }
     }
     s += "]}";
     server.sendContent(s);
@@ -1790,6 +2116,7 @@ static void setupRoutes() {
     Dir dir = LittleFS.openDir("/");
 
     while(dir.next()) {
+      radioServiceWdt();          // LittleFS walk + chunked send: keep the WDT fed
       String base = dir.fileName();
       if(base.startsWith("/")) base = base.substring(1, base.length());
       if(!base.startsWith("rf315_") || !base.endsWith(".bin")) continue;
@@ -1827,6 +2154,9 @@ static void setupRoutes() {
     s += ",\"lastFireError\":\"" + jsonEscape(gateLastFireError) + "\"";
     s += ",\"inner\":" + gateAssignmentJson(gateInner);
     s += ",\"outer\":" + gateAssignmentJson(gateOuter);
+    s += ",\"buttons\":{\"enabled\":" + jsonBool(btnCfg.enabled) +
+         ",\"state\":\"" + String(btnStateName(btnState)) + "\"}";
+    s += ",\"queueLen\":" + String(gateFireQueueLen);
     s += "}";
     sendJson(s);
   });
@@ -1879,7 +2209,7 @@ static void setupRoutes() {
   server.on("/api/gate/fire", HTTP_POST, []() {
     if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
     if(!gateEnabled) return sendError("gate control is disabled", 403);
-    if(isBusy() || playbackRequested || gateFireRequested) return sendError("busy", 409);
+    if(isBusy() || playbackRequested || gateFireQueueLen) return sendError("busy", 409);
 
     String which = server.arg("which");
     const GateAssignment* a = (which == "inner") ? &gateInner
@@ -1892,10 +2222,106 @@ static void setupRoutes() {
       return sendError("assigned sample is missing");
     }
 
-    gateFirePlan = *a;
-    gateFireRequested = true;
+    gateEnqueueFire(*a);
     sendJson(String("{\"ok\":true,\"which\":\"") + which +
              "\",\"sampleName\":\"" + jsonEscape(String(a->sampleName)) + "\"}");
+  });
+
+  // ---- A0 two-button addon (BUTTONS.md) ---------------------------------
+  server.on("/api/buttons", HTTP_GET, []() {
+    static const char* const NM[4] = {"none", "x", "y", "xy"};
+    String s = "{\"ok\":true";
+    s += ",\"enabled\":" + jsonBool(btnCfg.enabled);
+    s += ",\"comboEnabled\":" + jsonBool(btnCfg.comboEnabled);
+    s += ",\"raw\":" + String(btnRaw);
+    s += ",\"smoothed\":" + String(btnSmoothed);
+    s += ",\"state\":\"" + String(btnStateName(btnState)) + "\"";
+    s += ",\"x\":" + jsonBool(btnState == BTN_X || btnState == BTN_XY);
+    s += ",\"y\":" + jsonBool(btnState == BTN_Y || btnState == BTN_XY);
+    s += ",\"queueLen\":" + String(gateFireQueueLen);
+    s += ",\"settleMs\":" + String(btnCfg.settleMs);
+    s += ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+         ",\"yX\":" + String(btnCfg.thYX) +
+         ",\"xXy\":" + String(btnCfg.thXXy) +
+         ",\"floor\":" + String(btnCfg.thFloor) + "}";
+    s += ",\"observed\":{";
+    for(uint8_t i = 0; i < 4; ++i) {
+      if(i) s += ",";
+      s += "\"" + String(NM[i]) + "\":{\"seen\":" + jsonBool(btnObsSeen[i]) +
+           ",\"min\":" + String(btnObsSeen[i] ? btnObsMin[i] : 0) +
+           ",\"max\":" + String(btnObsSeen[i] ? btnObsMax[i] : 0) + "}";
+    }
+    s += "}";
+    s += ",\"calibration\":{";
+    for(uint8_t i = 0; i < 4; ++i) {
+      if(i) s += ",";
+      s += "\"" + String(NM[i]) + "\":" + (btnCalHave[i] ? String(btnCalCentre[i]) : String("null"));
+    }
+    s += "}";
+    s += ",\"events\":[";
+    for(uint8_t i = 0; i < btnEventCount; ++i) {
+      uint8_t idx = (btnEventHead + BTN_EVENT_LOG_MAX - btnEventCount + i) % BTN_EVENT_LOG_MAX;
+      const BtnEvent& e = btnEventLog[idx];
+      if(i) s += ",";
+      s += "{\"ms\":" + String(e.ms) +
+           ",\"from\":\"" + String(btnStateName((BtnState)e.from)) + "\"" +
+           ",\"to\":\"" + String(btnStateName((BtnState)e.to)) + "\"" +
+           ",\"smoothed\":" + String(e.smoothed) + "}";
+    }
+    s += "]}";
+    sendJson(s);
+  });
+
+  server.on("/api/buttons/config", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    ButtonConfig c = btnCfg;
+    uint32_t v = 0;
+    if(argU32("enabled", v))  c.enabled  = (v != 0);
+    if(argU32("combo", v))    c.comboEnabled = (v != 0);
+    if(argU32("noneY", v))    c.thNoneY  = (uint16_t)v;
+    if(argU32("yX", v))       c.thYX     = (uint16_t)v;
+    if(argU32("xXy", v))      c.thXXy    = (uint16_t)v;
+    if(argU32("floor", v))    c.thFloor  = (uint16_t)v;
+    if(argU32("settleMs", v)) c.settleMs = (uint16_t)v;
+    buttonsNormalize(c);
+    btnCfg = c;
+    if(!buttonsSaveConfig()) return sendError("could not persist button config", 500);
+    sendJson(String("{\"ok\":true,\"enabled\":") + jsonBool(btnCfg.enabled) +
+             ",\"comboEnabled\":" + jsonBool(btnCfg.comboEnabled) +
+             ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+             ",\"yX\":" + String(btnCfg.thYX) +
+             ",\"xXy\":" + String(btnCfg.thXXy) +
+             ",\"floor\":" + String(btnCfg.thFloor) + "}" +
+             ",\"settleMs\":" + String(btnCfg.settleMs) + "}");
+  });
+
+  server.on("/api/buttons/calibrate", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    String st = server.arg("state");
+    int idx = (st == "none") ? BTN_NONE : (st == "x") ? BTN_X
+            : (st == "y") ? BTN_Y : (st == "xy") ? BTN_XY : -1;
+    if(idx < 0) return sendError("state must be none, x, y or xy");
+    btnCalCentre[idx] = btnSmoothed;
+    btnCalHave[idx] = true;
+    btnRecomputeThresholds();
+    const bool ready = btnCalHave[0] && btnCalHave[1] && btnCalHave[2] && btnCalHave[3];
+    if(ready && !buttonsSaveConfig()) return sendError("could not persist button config", 500);
+    sendJson(String("{\"ok\":true,\"state\":\"") + st + "\",\"captured\":" + String(btnSmoothed) +
+             ",\"ready\":" + jsonBool(ready) +
+             ",\"thresholds\":{\"noneY\":" + String(btnCfg.thNoneY) +
+             ",\"yX\":" + String(btnCfg.thYX) +
+             ",\"xXy\":" + String(btnCfg.thXXy) +
+             ",\"floor\":" + String(btnCfg.thFloor) + "}}");
+  });
+
+  server.on("/api/buttons/clear", HTTP_POST, []() {
+    if(!sameOriginOk()) return sendError("cross-origin request rejected", 403);
+    for(uint8_t i = 0; i < 4; ++i) {
+      btnObsMin[i] = 1023; btnObsMax[i] = 0; btnObsSeen[i] = false;
+      btnCalCentre[i] = 0;  btnCalHave[i] = false;
+    }
+    btnEventHead = 0; btnEventCount = 0;
+    sendJson("{\"ok\":true}");
   });
 
   server.onNotFound([]() {
@@ -1917,7 +2343,16 @@ static void setupRoutes() {
 // -----------------------------------------------------------------------------
 void setup() {
   DBG_BEGIN();
-  DBG("cc1101 tool %s (%s)", FIRMWARE_VERSION, FIRMWARE_BUILD);
+  DBG("cc1101 tool %s (%s)  reset=%s", FIRMWARE_VERSION, FIRMWARE_BUILD,
+      ESP.getResetReason().c_str());
+
+  // The ~3.2 s software watchdog cannot actually be widened or switched off on
+  // the ESP8266: ESP.wdtEnable()'s timeout argument is ignored, and
+  // ESP.wdtDisable() (system_soft_wdt_stop) is re-armed by the SDK on the next
+  // yield()/delay(). So don't pretend to - FEED it instead. Every long CC1101
+  // send/scan path calls radioServiceWdt() well inside 3.2 s and is
+  // time-bounded so it can never spin forever; the ~8 s hardware watchdog is
+  // the backstop if a path ever stops feeding altogether.
 
   pinMode(PIN_CC1101_GDO0, INPUT);
   pinMode(PIN_CC1101_GDO2, INPUT);
@@ -1942,6 +2377,7 @@ void setup() {
   }
 
   gateLoadConfig();
+  buttonsLoadConfig();
 
   startWifi();
   DBG("wifi sta=%d ip=%s  ap=%s ip=%s",
@@ -1954,8 +2390,10 @@ void setup() {
 }
 
 void loop() {
+  ESP.wdtFeed();          // feed the soft WDT once per iteration
   server.handleClient();
   serviceWifi();
+  serviceButtons();
 
   if(captureActive) {
     if(pulseCount >= MAX_PULSES) captureTruncated = true;
@@ -1971,9 +2409,13 @@ void loop() {
     replayCurrent(playbackRepeats, playbackInvertRequested);
   }
 
-  if(gateFireRequested && !isBusy()) {
-    gateFireRequested = false;
-    fireGate(gateFirePlan);
+  if(gateFireQueueLen && !isBusy()) {
+    GateAssignment a = gateFireQueue[0];
+    for(uint8_t i = 1; i < gateFireQueueLen; ++i) gateFireQueue[i - 1] = gateFireQueue[i];
+    --gateFireQueueLen;
+    radioServiceWdt();
+    fireGate(a);
+    radioServiceWdt();
   }
 
   yield();
