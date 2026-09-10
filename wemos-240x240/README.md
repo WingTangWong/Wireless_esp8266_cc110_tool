@@ -39,23 +39,56 @@ cd wemos-240x240
 
 ## What it does
 
-Two off-screen `GFXcanvas16` sprites are composited onto the panel every
-10 ms:
+Off-screen `GFXcanvas16` sprites are composited onto the panel every 10 ms:
 
 - **Counter box** (100x44, centred) — a cyan outline with a 4-digit
   zero-padded counter inside, `+1` per tick, wrapping `9999 → 0000`.
-  Re-blitted whole each tick, so the outline is self-healing.
-- **Ball** (16x16) — a yellow circle that bounces off all four screen edges
-  *and* off the counter box.
+- **Ball** (16x16) — a yellow circle bouncing off the screen edges and the box.
+- **Stars** (20x20, up to 5) — spinning pentagrams that flash through
+  white/yellow/orange/red like an invincibility star, move at ~1.5x the ball's
+  speed, and fade to black over the last 1.5 s of a 5 s life. One spawns when
+  the ball bounces off the counter box and every 100 counts. With all five
+  slots busy a spawn is simply dropped.
 
-Collision against the box is resolved one axis at a time, so the ball's
-bounding rect never overlaps the box. That matters: the old ball position is
-erased with a plain `fillRect`, and if the rects could overlap that erase
-would punch a hole in the outline.
+The star canvas is a single buffer reused for all five: each star renders into
+it and blits immediately. Geometry comes from a precomputed table of 12
+rotation steps (a pentagram repeats every 72°), which keeps ~100 `sinf`/`cosf`
+calls per frame off a soft-float CPU.
 
-Rendering into a canvas and blitting once with `drawRGBBitmap` keeps each
-sprite flicker-free — drawing text or a circle straight to the panel shows
-the intermediate clear.
+Collision against the box is resolved one axis at a time, so a sprite's
+bounding rect never overlaps the box. That is what lets the outline be drawn
+once and left alone, and lets each erase be a blind rectangle fill. Every old
+rect is cleared before anything is drawn, so one sprite's erase can't punch a
+hole in another that was already redrawn.
+
+## Performance
+
+Two things had to be fixed to fit five stars into a 10 ms tick.
+
+**Adafruit_SPITFT has no ESP8266 bulk-SPI path.** It has one for ESP32,
+nRF52, RP2040 and SAMD; the ESP8266 falls through to a per-pixel loop.
+Measured on this board, that costs 3.6 µs/px for `drawRGBBitmap` and 7.2 µs/px
+for `fillRect` — about 4x worse than the 20 MHz clock allows, because the cost
+is per-call overhead, not clock time. `blitSprite()`/`fillRectFast()` drive the
+address window directly and hand the buffer to `SPI.writeBytes()` /
+`SPI.writePattern()`. Worst-case draw with 5 stars: **17.6 ms → 6.8 ms**.
+
+**160 MHz.** `board_build.f_cpu = 160000000L`. The remaining CPU-bound half
+(canvas fills, the triangle fan per star) halves: **6.8 ms → 5.2 ms**. The SPI
+clock comes from the fixed 80 MHz APB clock, not `F_CPU`, so transfer time is
+unchanged. `millis()`/`micros()` are frequency-independent in the ESP8266
+core, so no timing constant needed adjusting — confirmed on the board by
+counting ticks against wall clock.
+
+The sketch prints a heartbeat every 5 s:
+
+```
+draw worst 5229 us | stars 5 | 100 ticks/s | counter 401
+```
+
+`ticks/s` should read 100. If it sags, the draw pass has outgrown `TICK_MS`
+and every animation is running slow — that is the first thing to break if you
+add another sprite.
 
 ## Watchdog
 
