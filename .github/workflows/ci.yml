@@ -38,6 +38,10 @@ jobs:
       - name: Build the Wi-Fi remote (OLED / headless / self-test)
         run: pio run -e d1_mini_remote -e d1_mini_remote_headless -e d1_mini_remote_selftest
 
+      - name: Build the ST7789 240x240 display sub-project
+        working-directory: wemos-240x240
+        run: pio run -e d1_mini
+
   host:
     name: Host tooling + tests
     runs-on: ubuntu-latest
