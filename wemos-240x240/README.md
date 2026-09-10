@@ -44,14 +44,14 @@ Off-screen `GFXcanvas16` sprites are composited onto the panel every 10 ms:
 - **Counter box** (100x44, centred) — a cyan outline with a 4-digit
   zero-padded counter inside, `+1` per tick, wrapping `9999 → 0000`.
 - **Ball** (16x16) — a yellow circle bouncing off the screen edges and the box.
-- **Stars** (20x20, up to 5) — spinning pentagrams that flash through
+- **Stars** (20x20, up to 8) — spinning pentagrams that flash through
   white/yellow/orange/red like an invincibility star, move at ~1.5x the ball's
   speed, and fade to black over the last 1.5 s of a 5 s life. One spawns when
-  the ball bounces off the counter box and every 100 counts. With all five
+  the ball bounces off the counter box and every 100 counts. With all eight
   slots busy a spawn is simply dropped.
 
-The star canvas is a single buffer reused for all five: each star renders into
-it and blits immediately. Geometry comes from a precomputed table of 12
+The star canvas is a single buffer reused for all of them: each star renders
+into it and blits immediately. Geometry comes from a precomputed table of 12
 rotation steps (a pentagram repeats every 72°), which keeps ~100 `sinf`/`cosf`
 calls per frame off a soft-float CPU.
 
@@ -63,7 +63,8 @@ hole in another that was already redrawn.
 
 ## Performance
 
-Two things had to be fixed to fit five stars into a 10 ms tick.
+Two things had to be fixed to fit a screenful of stars into a 10 ms tick.
+Figures below are worst-case draw time at 5 stars, the limit before the fixes.
 
 **Adafruit_SPITFT has no ESP8266 bulk-SPI path.** It has one for ESP32,
 nRF52, RP2040 and SAMD; the ESP8266 falls through to a per-pixel loop.
@@ -71,7 +72,7 @@ Measured on this board, that costs 3.6 µs/px for `drawRGBBitmap` and 7.2 µs/px
 for `fillRect` — about 4x worse than the 20 MHz clock allows, because the cost
 is per-call overhead, not clock time. `blitSprite()`/`fillRectFast()` drive the
 address window directly and hand the buffer to `SPI.writeBytes()` /
-`SPI.writePattern()`. Worst-case draw with 5 stars: **17.6 ms → 6.8 ms**.
+`SPI.writePattern()`: **17.6 ms → 6.8 ms**.
 
 **160 MHz.** `board_build.f_cpu = 160000000L`. The remaining CPU-bound half
 (canvas fills, the triangle fan per star) halves: **6.8 ms → 5.2 ms**. The SPI
@@ -83,19 +84,34 @@ counting ticks against wall clock.
 The sketch prints a heartbeat every 5 s:
 
 ```
-draw worst 5229 us | stars 5 | 100 ticks/s | counter 401
+draw worst 6845 us | stars 7 | 100 ticks/s | counter 901
 ```
 
 `ticks/s` should read 100. If it sags, the draw pass has outgrown `TICK_MS`
 and every animation is running slow — that is the first thing to break if you
 add another sprite.
 
+With all 8 star slots live the draw pass measures 6.85 ms against the 10 ms
+tick (5 stars: 5.2 ms), so a star costs ~0.55 ms — mostly the 400 px erase
+plus 400 px blit. That puts the ceiling somewhere near 13 stars before the
+tick overruns. Raising SPI from 20 to 40 MHz is the next lever if you want
+more, but 20 MHz is the speed this panel is known-good at, so check it on
+glass before trusting it.
+
 ## Watchdog
 
 Same rule as the main firmware: the ESP8266's ~3.2 s software watchdog can't
 be widened or switched off. `ESP.wdtEnable()`'s timeout argument is ignored,
 and `ESP.wdtDisable()` is re-armed by the SDK on the next `yield()`/`delay()`.
-So `serviceWdt()` — `ESP.wdtFeed()` plus `delay(0)` — is called after every
-blit and after the full-screen clear. The SPI writes run with interrupts
-masked, so those `delay(0)` calls are what give the SDK a slot. The ~8 s
-hardware watchdog is the backstop.
+So `serviceWdt()` is called after every blit and after the full-screen clear.
+The ~8 s hardware watchdog is the backstop.
+
+It feeds with `ESP.wdtFeed()` and yields with `optimistic_yield(1000)`, not
+`delay(0)`. Feeding is free; the yield is not — `delay(0)`/`yield()` hands off
+to the cont stack on every single call, and this runs eight-plus times a
+frame. `optimistic_yield` only actually switches once >1 ms has passed, so the
+SDK still gets its slot without paying the context switch per blit.
+
+(Worth noting: `delay(0)` was *not* what was blowing the frame budget. That was
+the first guess, and measuring showed swapping it changed nothing — see
+Performance above for what actually cost the time.)

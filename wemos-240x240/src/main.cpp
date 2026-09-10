@@ -61,9 +61,9 @@ static int16_t ballPX = 20, ballPY = 20;  // previous position, for the erase
 
 // --- star sprites -----------------------------------------------------------
 // One canvas, reused: each star is rendered into it and blitted immediately,
-// so five stars cost one buffer rather than five.
+// so all MAX_STARS of them cost one buffer rather than eight.
 static const int16_t STAR_D = 20;
-static const uint8_t MAX_STARS = 5;
+static const uint8_t MAX_STARS = 8;
 static const uint32_t STAR_LIFE_MS = 5000;
 static const uint32_t STAR_FADE_MS = 1500;  // fades over the tail of its life
 static GFXcanvas16 starSprite(STAR_D, STAR_D);
